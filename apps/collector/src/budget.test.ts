@@ -9,13 +9,14 @@ import { HttpClient } from './http.js';
  * visitor — so exceeding it takes everyone down at once.
  */
 
-function budgetedClient(perMinute: number) {
+function budgetedClient(perMinute: number, startRatePerMin = perMinute) {
   let clock = 0;
   const slept: number[] = [];
   let served = 0;
 
   const client = new HttpClient({
     budgetPerMin: perMinute,
+    startRatePerMin,
     now: () => clock,
     sleep: (ms) => {
       slept.push(ms);
@@ -115,6 +116,86 @@ describe('rate budget', () => {
     });
     expect(unlimited.budgetAvailable).toBeNull();
     expect(h.client.budgetAvailable).not.toBeNull();
+  });
+});
+
+describe('adaptive rate', () => {
+  it('opens well below a high ceiling instead of trusting it', async () => {
+    // Booting at the ceiling is what produced a burst of 429s on every deploy:
+    // the bucket spent its whole allowance before it had any evidence the
+    // upstream would accept that rate.
+    const h = budgetedClient(600, 55);
+    expect(h.client.budgetPerMin).toBe(55);
+
+    // The opening allowance is the start rate, not the ceiling: request 56 has
+    // to wait, where booting at 600 would have let 600 straight through.
+    for (let i = 0; i < 55; i++) await h.client.getJson('https://x');
+    expect(h.slept).toEqual([]);
+    await h.client.getJson('https://x');
+    expect(h.slept.at(-1)).toBeGreaterThan(0);
+  });
+
+  it('halves the rate on a 429', async () => {
+    let clock = 0;
+    let throttle = true;
+    const client = new HttpClient({
+      budgetPerMin: 120,
+      startRatePerMin: 120,
+      attempts: 2,
+      now: () => clock,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      fetch: (() => {
+        const response = throttle
+          ? new Response('{}', { status: 429, headers: { 'retry-after': '1' } })
+          : new Response('{}', {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+        throttle = false;
+        return Promise.resolve(response);
+      }) as unknown as typeof globalThis.fetch,
+    });
+
+    await client.getJson('https://x');
+    expect(client.budgetPerMin).toBe(60);
+  });
+
+  it('never paces below the floor however many 429s arrive', async () => {
+    let clock = 0;
+    const client = new HttpClient({
+      budgetPerMin: 600,
+      startRatePerMin: 600,
+      attempts: 40,
+      now: () => clock,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      fetch: (() =>
+        Promise.resolve(
+          new Response('{}', { status: 429, headers: { 'retry-after': '1' } }),
+        )) as unknown as typeof globalThis.fetch,
+    });
+
+    await client.getJson('https://x').catch(() => undefined);
+    // A stalled feed is worse than a slow one.
+    expect(client.budgetPerMin).toBeGreaterThanOrEqual(12);
+  });
+
+  it('climbs back after a run of clean requests', async () => {
+    const h = budgetedClient(600, 24);
+    // Enough successes to trip the recovery streak more than once.
+    for (let i = 0; i < 40; i++) await h.client.getJson('https://x');
+    expect(h.client.budgetPerMin).toBeGreaterThan(24);
+  });
+
+  it('never climbs past the ceiling', async () => {
+    const h = budgetedClient(60, 60);
+    for (let i = 0; i < 200; i++) await h.client.getJson('https://x');
+    expect(h.client.budgetPerMin).toBe(60);
   });
 });
 

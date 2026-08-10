@@ -25,8 +25,10 @@ export interface HttpClientOptions {
   attempts?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
-  /** Sustained ceiling for this upstream. Omit for no client-side limit. */
+  /** Upper bound the adaptive rate may climb to. Omit for no client-side limit. */
   budgetPerMin?: number;
+  /** Opening rate. Defaults to a conservative value well under the ceiling. */
+  startRatePerMin?: number;
   fetch?: typeof globalThis.fetch;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -36,7 +38,17 @@ export interface HttpClientOptions {
 /** Never pace below this, or a bad patch of 429s would stall the feed entirely. */
 const MIN_RATE_PER_MIN = 12;
 /** Successful requests needed before the rate creeps back up. */
-const RECOVERY_STREAK = 20;
+const RECOVERY_STREAK = 10;
+/**
+ * Opening rate when none is given.
+ *
+ * Measured safe against the keyless host, and the only number here that is not
+ * a guess. Starting at the ceiling instead cost a burst of 429s on every boot:
+ * the bucket handed out its whole allowance before it had any evidence the
+ * upstream would accept that rate, then spent minutes climbing back down.
+ * Starting low and probing upward pays a few slow seconds instead.
+ */
+const DEFAULT_START_PER_MIN = 55;
 
 /**
  * Token bucket that tunes its own ceiling.
@@ -56,10 +68,11 @@ class Budget {
 
   constructor(
     readonly ceiling: number,
+    startRate: number,
     private readonly now: () => number,
   ) {
-    this.#rate = ceiling;
-    this.#tokens = ceiling;
+    this.#rate = Math.min(ceiling, Math.max(MIN_RATE_PER_MIN, startRate));
+    this.#tokens = this.#rate;
     this.#updatedAt = now();
   }
 
@@ -155,7 +168,11 @@ export class HttpClient {
     this.#budget =
       options.budgetPerMin === undefined
         ? undefined
-        : new Budget(options.budgetPerMin, this.#now);
+        : new Budget(
+            options.budgetPerMin,
+            options.startRatePerMin ?? DEFAULT_START_PER_MIN,
+            this.#now,
+          );
   }
 
   /** Wall-clock ms until the shared throttle lifts, 0 when clear. */
