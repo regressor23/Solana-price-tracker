@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "npm run build -w @sol-warzone/protocol && npm run build -w @sol-warzone/web && npm run build -w @sol-warzone/collector",
+    "clean": "npm run clean -w @sol-warzone/collector && npm run clean -w @sol-warzone/protocol && npm run clean -w @sol-warzone/web",
     "start": "npm run start -w @sol-warzone/collector",
     "dev": "npm run dev -w @sol-warzone/collector",
     "dev:web": "npm run dev -w @sol-warzone/web",

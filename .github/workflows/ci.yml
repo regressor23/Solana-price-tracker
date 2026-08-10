@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Format, lint, typecheck, test
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      # Railway builds with a scoped workspace command rather than the root
+      # script. Proving those still cascade here keeps a green CI from hiding a
+      # deploy that produces no client bundle.
+      # `npm run clean`, not `rm -rf dist` — tsc --build trusts its
+      # .tsbuildinfo and would treat a hand-deleted dist as already up to date,
+      # emitting nothing and making this check pass on a stale artifact.
+      - name: Scoped workspace builds still resolve their dependencies
+        run: |
+          npm run clean
+          npm run build --workspace=@sol-warzone/web
+          test -f apps/web/dist/index.html
+          npm run clean
+          npm run build --workspace=@sol-warzone/collector
+          test -f apps/collector/dist/index.js
+          test -f apps/web/dist/index.html
+
+      - name: Smoke test the production server
+        env:
+          NODE_ENV: production
+          PORT: 8080
+        run: |
+          node apps/collector/dist/index.js &
+          server=$!
+          trap 'kill $server 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/healthz >/dev/null && break
+            sleep 1
+          done
+
+          health=$(curl -sf http://127.0.0.1:8080/healthz)
+          echo "$health"
+          echo "$health" | grep -q '"web":"ok"'
+          echo "$health" | grep -q '"env":"production"'
+
+          curl -sf http://127.0.0.1:8080/ | grep -q '<title>'
+
+          # Encoded traversal must not escape the served root.
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            'http://127.0.0.1:8080/%2e%2e%2f%2e%2e%2fpackage.json')
+          test "$code" = "404"

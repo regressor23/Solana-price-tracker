@@ -53,6 +53,13 @@ or enable the per-swap feed.
 npm run check          # format + lint + typecheck + test
 ```
 
+CI runs the same thing on every push and pull request, then builds, then boots
+the production server and smoke-tests it.
+
+Use `npm run clean` rather than deleting `dist` by hand. `tsc --build` trusts
+its `.tsbuildinfo`, so after a manual `rm -rf dist` it decides the project is
+already current and emits nothing — leaving you debugging an empty directory.
+
 ## Build order
 
 `packages/protocol` compiles to `dist/` and both apps import it from there, so
