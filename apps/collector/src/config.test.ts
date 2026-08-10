@@ -44,24 +44,27 @@ describe('numeric parsing', () => {
   });
 });
 
-describe('jupiter host selection', () => {
-  it('uses the keyless lite host when no key is set', () => {
+describe('jupiter hosts', () => {
+  it('always offers both hosts, so a rejected key has somewhere to fall back', () => {
     const { jupiter } = load();
-    expect(jupiter.apiKey).toBe('');
-    expect(jupiter.baseUrl).toBe('https://lite-api.jup.ag');
+    expect(jupiter.liteUrl).toBe('https://lite-api.jup.ag');
+    expect(jupiter.keyedUrl).toBe('https://api.jup.ag');
   });
 
-  it('switches to the keyed host when a key is present', () => {
-    const { jupiter } = load({ JUPITER_API_KEY: 'jup_live_xxx' });
-    expect(jupiter.baseUrl).toBe('https://api.jup.ag');
+  it('reports no key when none is set', () => {
+    expect(load().jupiter.apiKey).toBe('');
+  });
+
+  it('carries the key through when one is set', () => {
+    expect(load({ JUPITER_API_KEY: 'jup_live_xxx' }).jupiter.apiKey).toBe(
+      'jup_live_xxx',
+    );
   });
 
   it('treats a whitespace-only key as absent', () => {
     // A variable left blank in the Railway UI must not select the keyed host,
-    // which would then reject every request as unauthenticated.
-    const { jupiter } = load({ JUPITER_API_KEY: '   ' });
-    expect(jupiter.apiKey).toBe('');
-    expect(jupiter.baseUrl).toBe('https://lite-api.jup.ag');
+    // which rejects unauthenticated callers harder than the keyless one does.
+    expect(load({ JUPITER_API_KEY: '   ' }).jupiter.apiKey).toBe('');
   });
 
   it('trims a key that was pasted with padding', () => {

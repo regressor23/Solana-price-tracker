@@ -48,7 +48,8 @@ const server = http.createServer((req, res) => {
       status: feeds.diagnostics().status,
       clients: hub.clientCount,
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-      jupiter: config.jupiter.apiKey ? 'keyed' : 'lite',
+      jupiter: feeds.diagnostics().profile,
+      keyRejected: feeds.diagnostics().keyRejected,
     });
     return;
   }
@@ -76,7 +77,8 @@ const server = http.createServer((req, res) => {
 const hub = new Hub(server, config.heartbeatMs);
 
 const feeds = new MarketFeeds({
-  baseUrl: config.jupiter.baseUrl,
+  liteUrl: config.jupiter.liteUrl,
+  keyedUrl: config.jupiter.keyedUrl,
   dataUrl: config.jupiter.dataUrl,
   ...(config.jupiter.apiKey ? { apiKey: config.jupiter.apiKey } : {}),
   publish: (event) => hub.publish(event),
@@ -87,7 +89,8 @@ hub.onSnapshotRequest(() => feeds.snapshot());
 
 server.listen(config.port, config.host, () => {
   console.log(
-    `[collector] ${PAIR_LABEL} · http://${config.host}:${config.port} · ws /ws · jupiter=${config.jupiter.baseUrl}`,
+    `[collector] ${PAIR_LABEL} · http://${config.host}:${config.port} · ws /ws · ` +
+      `jupiter=${feeds.diagnostics().upstream.quoteHost}`,
   );
   if (!webBundlePresent) {
     console.warn(

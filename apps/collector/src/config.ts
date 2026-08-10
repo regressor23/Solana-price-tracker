@@ -5,7 +5,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export interface JupiterConfig {
   readonly apiKey: string;
-  readonly baseUrl: string;
+  /** Keyless host. Also where the collector retreats if a key is rejected. */
+  readonly liteUrl: string;
+  /** Keyed host. Rejects unauthenticated callers harder than the lite one. */
+  readonly keyedUrl: string;
   readonly dataUrl: string;
 }
 
@@ -33,9 +36,10 @@ const num = (raw: string | undefined, fallback: number): number => {
 
 export function loadConfig(env: Env = process.env): Config {
   /**
-   * Jupiter serves the same routes on two hosts: `lite-api` needs no key but is
-   * rate limited, `api` needs one and is not. Picking the host off the key means
-   * adding `JUPITER_API_KEY` in Railway is the only step to upgrade.
+   * Jupiter serves the same routes on two hosts: `lite-api` needs no key and
+   * allows about 60 requests a minute, `api` needs one and allows more. Both
+   * are handed to the collector, which picks by key and can fall back to the
+   * keyless host at runtime if the key turns out to be rejected.
    */
   const jupiterApiKey = env['JUPITER_API_KEY']?.trim() ?? '';
 
@@ -46,7 +50,8 @@ export function loadConfig(env: Env = process.env): Config {
 
     jupiter: {
       apiKey: jupiterApiKey,
-      baseUrl: jupiterApiKey ? 'https://api.jup.ag' : 'https://lite-api.jup.ag',
+      liteUrl: 'https://lite-api.jup.ag',
+      keyedUrl: 'https://api.jup.ag',
       dataUrl: 'https://datapi.jup.ag',
     },
 

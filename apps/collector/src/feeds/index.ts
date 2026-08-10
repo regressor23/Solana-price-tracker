@@ -2,15 +2,13 @@ import {
   FEED_PROFILES,
   RATE_BUDGET_PER_MIN,
   type Candle,
-  type DepthSnapshot,
   type FeedStatus,
   type MarketEvent,
-  type PriceTick,
   type Snapshot,
   type Trade,
 } from '@sol-warzone/protocol';
 
-import { HttpClient } from '../http.js';
+import { HttpClient, HttpError } from '../http.js';
 import { Poller } from '../poller.js';
 import { CandleFeed } from './candles.js';
 import { DepthFeed } from './depth.js';
@@ -18,7 +16,10 @@ import { PriceFeed } from './price.js';
 import { TradeFeed } from './trades.js';
 
 export interface MarketFeedsOptions {
-  baseUrl: string;
+  /** Keyless host. Also the fallback when a key turns out to be bad. */
+  liteUrl: string;
+  /** Keyed host, used only while a key is configured and accepted. */
+  keyedUrl: string;
   dataUrl: string;
   apiKey?: string;
   publish: (event: MarketEvent) => void;
@@ -41,11 +42,15 @@ const RECENT_TRADES = 50;
 export interface FeedDiagnostics {
   status: FeedStatus;
   profile: string;
+  keyRejected: boolean;
   refUsd: number;
   volumePerMinute: number | null;
   upstream: {
+    quoteHost: string;
+    quoteRatePerMin: number | null;
     quoteBudgetLeft: number | null;
     quoteThrottleHits: number;
+    quoteAuthFailures: number;
     dataThrottleHits: number;
   };
   pollers: {
@@ -57,6 +62,9 @@ export interface FeedDiagnostics {
   }[];
 }
 
+const isAuthFailure = (error: unknown): boolean =>
+  error instanceof HttpError && (error.status === 401 || error.status === 403);
+
 /**
  * Owns every upstream poller and the state a joining client needs.
  *
@@ -64,86 +72,50 @@ export interface FeedDiagnostics {
  * fan-out depends on.
  */
 export class MarketFeeds {
+  readonly #options: MarketFeedsOptions;
   readonly #publish: (event: MarketEvent) => void;
   readonly #setStatus: (status: FeedStatus, detail?: string) => void;
   readonly #now: () => number;
 
-  readonly #price: PriceFeed;
-  readonly #depth: DepthFeed;
   readonly #trades: TradeFeed;
   readonly #candles: CandleFeed;
-  readonly #pollers: Poller[];
-  readonly #profile: keyof typeof FEED_PROFILES;
-  readonly #quoteHttp: HttpClient;
   readonly #dataHttp: HttpClient;
+  readonly #dataPollers: Poller[];
+
+  #quoteHttp!: HttpClient;
+  #price!: PriceFeed;
+  #depth!: DepthFeed;
+  #quotePollers: Poller[] = [];
+  #profile: keyof typeof FEED_PROFILES = 'lite';
+  #quoteHost = '';
+  #keyRejected = false;
+  #started = false;
 
   #recentTrades: Trade[] = [];
   #status: FeedStatus = 'sync';
 
   constructor(options: MarketFeedsOptions) {
+    this.#options = options;
     this.#publish = options.publish;
     this.#setStatus = options.setStatus;
     this.#now = options.now ?? Date.now;
 
-    const keyed = Boolean(options.apiKey);
-    this.#profile = keyed ? 'keyed' : 'lite';
-    const cadence = FEED_PROFILES[this.#profile];
-
     // Two clients, because the hosts have very different ceilings: the quote
-    // API tolerates about 60 requests a minute, the data API more than twice
-    // that. A single shared budget would throttle trades to protect quotes.
-    this.#quoteHttp =
-      options.http ??
-      new HttpClient({
-        ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-        budgetPerMin: keyed
-          ? RATE_BUDGET_PER_MIN.keyedApi
-          : RATE_BUDGET_PER_MIN.liteApi,
-      });
+    // API tolerates about 60 requests a minute keyless, the data API more than
+    // twice that. A single shared budget would throttle trades to protect
+    // quotes.
     this.#dataHttp =
       options.http ?? new HttpClient({ budgetPerMin: RATE_BUDGET_PER_MIN.dataApi });
-
-    const http = this.#quoteHttp;
     const data = this.#dataHttp;
 
-    this.#price = new PriceFeed({ http, baseUrl: options.baseUrl });
-    this.#depth = new DepthFeed({ http, baseUrl: options.baseUrl });
     this.#trades = new TradeFeed({ http: data, dataUrl: options.dataUrl });
     this.#candles = new CandleFeed({ http: data, dataUrl: options.dataUrl });
 
-    const onError = (name: string, error: unknown) => {
-      console.warn(
-        `[feed:${name}] ${error instanceof Error ? error.message : String(error)}`,
-      );
-      this.#refreshStatus();
-    };
-
-    this.#pollers = [
-      new Poller({
-        name: 'price',
-        intervalMs: cadence.price,
-        onError,
-        tick: async () => {
-          const tick = await this.#price.poll();
-          if (tick) this.#publish(tick);
-          this.#refreshStatus();
-        },
-      }),
-      new Poller({
-        name: 'depth',
-        intervalMs: cadence.depth,
-        onError,
-        tick: async () => {
-          this.#publish(await this.#depth.poll());
-          this.#refreshStatus();
-        },
-      }),
-      // Trades share the price cadence: the feed turns over several times a
-      // second, so a slower poll would silently drop events off the page.
+    this.#dataPollers = [
       new Poller({
         name: 'trades',
-        intervalMs: cadence.trades,
-        onError,
+        intervalMs: FEED_PROFILES.lite.trades,
+        onError: this.#onError,
         tick: async () => {
           for (const trade of await this.#trades.poll()) {
             this.#publish(trade);
@@ -156,21 +128,29 @@ export class MarketFeeds {
       }),
       new Poller({
         name: 'candles',
-        intervalMs: cadence.candles,
-        onError,
+        intervalMs: FEED_PROFILES.lite.candles,
+        onError: this.#onError,
         tick: async () => {
           await this.#candles.poll();
         },
       }),
     ];
+
+    this.#installQuoteTier(Boolean(options.apiKey));
   }
 
   start(): void {
-    for (const poller of this.#pollers) poller.start();
+    this.#started = true;
+    for (const poller of [...this.#quotePollers, ...this.#dataPollers]) {
+      poller.start();
+    }
   }
 
   stop(): void {
-    for (const poller of this.#pollers) poller.stop();
+    this.#started = false;
+    for (const poller of [...this.#quotePollers, ...this.#dataPollers]) {
+      poller.stop();
+    }
   }
 
   /** Warm-start payload for a client that just connected. */
@@ -179,8 +159,8 @@ export class MarketFeeds {
       type: 'snapshot',
       t: this.#now(),
       status: this.#status,
-      price: this.#priceTick,
-      depth: this.#depthSnapshot,
+      price: this.#price.last ?? null,
+      depth: this.#depth.last ?? null,
       candles: this.#candles.last,
       recentTrades: this.#recentTrades,
     };
@@ -190,14 +170,18 @@ export class MarketFeeds {
     return {
       status: this.#status,
       profile: this.#profile,
+      keyRejected: this.#keyRejected,
       refUsd: this.#trades.refUsd,
       volumePerMinute: this.#candles.volumePerMinute,
       upstream: {
+        quoteHost: this.#quoteHost,
+        quoteRatePerMin: this.#quoteHttp.budgetPerMin,
         quoteBudgetLeft: this.#quoteHttp.budgetAvailable,
         quoteThrottleHits: this.#quoteHttp.throttleHits,
+        quoteAuthFailures: this.#quoteHttp.authFailures,
         dataThrottleHits: this.#dataHttp.throttleHits,
       },
-      pollers: this.#pollers.map((poller) => ({
+      pollers: [...this.#quotePollers, ...this.#dataPollers].map((poller) => ({
         name: poller.name,
         lastOkAt: poller.lastOkAt,
         lastErrorAt: poller.lastErrorAt,
@@ -207,16 +191,81 @@ export class MarketFeeds {
     };
   }
 
-  get #priceTick(): PriceTick | null {
-    return this.#price.last ?? null;
-  }
-
-  get #depthSnapshot(): DepthSnapshot | null {
-    return this.#depth.last ?? null;
-  }
-
   get candles(): readonly Candle[] {
     return this.#candles.last;
+  }
+
+  // -------------------------------------------------------------------------
+
+  readonly #onError = (name: string, error: unknown): void => {
+    console.warn(
+      `[feed:${name}] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // A rejected key is not a transient failure. Retrying it forever leaves the
+    // site dead, and the keyed host is stricter than the keyless one for
+    // unauthenticated callers, so staying put is the worst of both.
+    if (isAuthFailure(error)) this.#dropRejectedKey();
+    this.#refreshStatus();
+  };
+
+  #installQuoteTier(keyed: boolean): void {
+    const { apiKey, keyedUrl, liteUrl, http } = this.#options;
+    this.#profile = keyed ? 'keyed' : 'lite';
+    this.#quoteHost = keyed ? keyedUrl : liteUrl;
+    const cadence = FEED_PROFILES[this.#profile];
+
+    this.#quoteHttp =
+      http ??
+      new HttpClient({
+        ...(keyed && apiKey ? { apiKey } : {}),
+        budgetPerMin: keyed
+          ? RATE_BUDGET_PER_MIN.keyedApi
+          : RATE_BUDGET_PER_MIN.liteApi,
+      });
+
+    const client = this.#quoteHttp;
+    this.#price = new PriceFeed({ http: client, baseUrl: this.#quoteHost });
+    this.#depth = new DepthFeed({ http: client, baseUrl: this.#quoteHost });
+
+    this.#quotePollers = [
+      new Poller({
+        name: 'price',
+        intervalMs: cadence.price,
+        onError: this.#onError,
+        tick: async () => {
+          const tick = await this.#price.poll();
+          if (tick) this.#publish(tick);
+          this.#refreshStatus();
+        },
+      }),
+      new Poller({
+        name: 'depth',
+        intervalMs: cadence.depth,
+        onError: this.#onError,
+        tick: async () => {
+          this.#publish(await this.#depth.poll());
+          this.#refreshStatus();
+        },
+      }),
+    ];
+  }
+
+  /** Rebuild the quote tier without a key, keeping the process running. */
+  #dropRejectedKey(): void {
+    if (this.#keyRejected || this.#profile !== 'keyed') return;
+    this.#keyRejected = true;
+
+    console.warn(
+      '[collector] JUPITER_API_KEY was rejected — falling back to the keyless ' +
+        'host and the slower cadence. Check the key at portal.jup.ag.',
+    );
+
+    for (const poller of this.#quotePollers) poller.stop();
+    this.#installQuoteTier(false);
+    if (this.#started) for (const poller of this.#quotePollers) poller.start();
+
+    this.#setStatus('degraded', 'api key rejected — running keyless');
+    this.#status = 'degraded';
   }
 
   /**
@@ -224,8 +273,7 @@ export class MarketFeeds {
    * gating "live" on them would flap; they only matter for the warm start.
    */
   #refreshStatus(): void {
-    const pricePoller = this.#pollers[0];
-    const lastOk = pricePoller?.lastOkAt ?? 0;
+    const lastOk = this.#quotePollers[0]?.lastOkAt ?? 0;
     const age = this.#now() - lastOk;
 
     let next: FeedStatus;

@@ -33,30 +33,46 @@ export interface HttpClientOptions {
   now?: () => number;
 }
 
+/** Never pace below this, or a bad patch of 429s would stall the feed entirely. */
+const MIN_RATE_PER_MIN = 12;
+/** Successful requests needed before the rate creeps back up. */
+const RECOVERY_STREAK = 20;
+
 /**
- * Token bucket sized in requests per minute.
+ * Token bucket that tunes its own ceiling.
  *
- * Staying under the ceiling by construction beats discovering it through 429s:
- * once Jupiter starts refusing, every feed degrades at once and the backoff
- * makes recovery slower than the throttle itself.
+ * The configured rate is an upper bound, not a known-good number. Jupiter's
+ * published limits vary by tier and the collector cannot see which tier a key
+ * belongs to, so guessing high and hoping is how the keyed profile ended up
+ * throttled in production. Instead the bucket halves its rate on every 429 and
+ * edges back up after a run of clean requests, which converges on whatever the
+ * real limit turns out to be without anyone having to measure it.
  */
 class Budget {
   #tokens: number;
   #updatedAt: number;
+  #rate: number;
+  #streak = 0;
 
   constructor(
-    readonly perMinute: number,
+    readonly ceiling: number,
     private readonly now: () => number,
   ) {
-    this.#tokens = perMinute;
+    this.#rate = ceiling;
+    this.#tokens = ceiling;
     this.#updatedAt = now();
+  }
+
+  /** Rate currently being enforced, which may be below the ceiling. */
+  get perMinute(): number {
+    return this.#rate;
   }
 
   /** Milliseconds until a token is available, 0 when one can be spent now. */
   waitMs(): number {
     this.#refill();
     if (this.#tokens >= 1) return 0;
-    return Math.ceil(((1 - this.#tokens) * 60_000) / this.perMinute);
+    return Math.ceil(((1 - this.#tokens) * 60_000) / this.#rate);
   }
 
   spend(): void {
@@ -69,15 +85,28 @@ class Budget {
     return this.#tokens;
   }
 
+  /** Multiplicative decrease — the upstream just told us we are too fast. */
+  penalise(): void {
+    this.#refill();
+    this.#rate = Math.max(MIN_RATE_PER_MIN, this.#rate / 2);
+    this.#tokens = Math.min(this.#tokens, 0);
+    this.#streak = 0;
+  }
+
+  /** Additive increase, so a one-off 429 does not cap the feed forever. */
+  reward(): void {
+    if (this.#rate >= this.ceiling) return;
+    if (++this.#streak < RECOVERY_STREAK) return;
+    this.#streak = 0;
+    this.#rate = Math.min(this.ceiling, this.#rate + MIN_RATE_PER_MIN);
+  }
+
   #refill(): void {
     const at = this.now();
     const elapsed = at - this.#updatedAt;
     if (elapsed <= 0) return;
     this.#updatedAt = at;
-    this.#tokens = Math.min(
-      this.perMinute,
-      this.#tokens + (elapsed * this.perMinute) / 60_000,
-    );
+    this.#tokens = Math.min(this.#rate, this.#tokens + (elapsed * this.#rate) / 60_000);
   }
 }
 
@@ -111,6 +140,7 @@ export class HttpClient {
 
   #throttledUntil = 0;
   #throttleHits = 0;
+  #authFailures = 0;
 
   constructor(options: HttpClientOptions = {}) {
     this.#apiKey = options.apiKey ?? '';
@@ -143,6 +173,20 @@ export class HttpClient {
     return this.#budget?.available ?? null;
   }
 
+  /** Rate currently enforced, which drops below the ceiling after a 429. */
+  get budgetPerMin(): number | null {
+    return this.#budget?.perMinute ?? null;
+  }
+
+  /** Count of 401/403 responses — a rejected or revoked key. */
+  get authFailures(): number {
+    return this.#authFailures;
+  }
+
+  get hasApiKey(): boolean {
+    return this.#apiKey !== '';
+  }
+
   async getJson<T>(url: string): Promise<T> {
     let lastError: unknown;
 
@@ -164,7 +208,18 @@ export class HttpClient {
           signal: AbortSignal.timeout(this.#timeoutMs),
         });
 
-        if (response.ok) return (await response.json()) as T;
+        if (response.ok) {
+          this.#budget?.reward();
+          return (await response.json()) as T;
+        }
+
+        // A rejected key never fixes itself by retrying. Tell the caller once
+        // so it can fall back, rather than burning the retry budget on it.
+        if (response.status === 401 || response.status === 403) {
+          const body = await response.text().catch(() => '');
+          this.#authFailures++;
+          throw new HttpError(response.status, url, body.slice(0, 200));
+        }
 
         const body = await response.text().catch(() => '');
         const error = new HttpError(response.status, url, body.slice(0, 200));
@@ -181,6 +236,7 @@ export class HttpClient {
         if (response.status === 429) {
           this.#throttledUntil = this.#now() + wait;
           this.#throttleHits++;
+          this.#budget?.penalise();
         }
         lastError = error;
         await this.#sleep(wait);
