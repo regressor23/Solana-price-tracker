@@ -216,23 +216,33 @@ export const budgetForRps = (rps: number): number =>
 /**
  * Poll cadences.
  *
- * `lite` fits inside 55 requests a minute: price takes half the budget and one
- * 18-request depth ladder every 45s takes most of the rest. `fast` needs about
- * 168/min — roughly 2.8 RPS — so it is only reachable on a paid plan.
+ * `lite` must fit inside the keyless budget *with headroom*, not merely fit.
+ * Price at 2s and one 18-request ladder every 45s came to 54/min against a
+ * budget of 55, and the ladder firing 18 requests at once pushed price polls
+ * into the queue behind it — a quarter of them were dropped in production.
+ * Backing the ladder off to 60s leaves ~13% spare, which absorbs the burst.
+ *
+ * `fast` needs about 168/min — roughly 2.8 RPS — so it is only reachable on a
+ * paid plan. `demandPerMin` and the tests keep both honest.
  */
 export const FEED_PROFILES = {
-  lite: { price: 2_000, depth: 45_000, trades: 1_000, candles: 60_000 },
+  lite: { price: 2_000, depth: 60_000, trades: 1_000, candles: 60_000 },
   fast: { price: 1_000, depth: 10_000, trades: 1_000, candles: 60_000 },
 } as const;
 
-export type FeedProfile = keyof typeof FEED_PROFILES;
-
-/** Requests per minute the `fast` cadence demands: 60 price + 6 ladders. */
-export const FAST_PROFILE_DEMAND_PER_MIN = 60 + 6 * DEPTH_LADDER_SOL.length * 2;
-
 /** The fast cadence is only honest when the plan can actually sustain it. */
 export const profileForRps = (rps: number): FeedProfile =>
-  budgetForRps(rps) >= FAST_PROFILE_DEMAND_PER_MIN ? 'fast' : 'lite';
+  budgetForRps(rps) >= demandPerMin('fast') ? 'fast' : 'lite';
+
+/** Requests per minute a profile asks for: price polls plus depth ladders. */
+export const demandPerMin = (profile: FeedProfile): number => {
+  const cadence = FEED_PROFILES[profile];
+  return (
+    60_000 / cadence.price + (60_000 / cadence.depth) * DEPTH_LADDER_SOL.length * 2
+  );
+};
+
+export type FeedProfile = keyof typeof FEED_PROFILES;
 
 /** Server -> client broadcast rate. */
 export const BROADCAST_HZ = 10;

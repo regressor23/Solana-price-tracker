@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  FAST_PROFILE_DEMAND_PER_MIN,
   JUPITER_PLAN_RPS,
   RATE_BUDGET_PER_MIN,
+  FEED_PROFILES,
   budgetForRps,
+  demandPerMin,
   profileForRps,
 } from './index.js';
 
@@ -49,12 +50,23 @@ describe('profileForRps', () => {
   it('demands more than the free plan can give', () => {
     // If this ever stopped holding, the fast profile would be reachable on a
     // plan that cannot serve it and the collector would throttle itself again.
-    expect(FAST_PROFILE_DEMAND_PER_MIN).toBeGreaterThan(
-      budgetForRps(JUPITER_PLAN_RPS.free),
-    );
+    expect(demandPerMin('fast')).toBeGreaterThan(budgetForRps(JUPITER_PLAN_RPS.free));
   });
 
   it('demands more than the keyless lite budget, so falling back is honest', () => {
-    expect(FAST_PROFILE_DEMAND_PER_MIN).toBeGreaterThan(RATE_BUDGET_PER_MIN.liteApi);
+    expect(demandPerMin('fast')).toBeGreaterThan(RATE_BUDGET_PER_MIN.liteApi);
+  });
+});
+
+describe('lite profile headroom', () => {
+  it('leaves room for the ladder burst instead of just fitting', () => {
+    // Fitting exactly is what dropped a quarter of production's price polls:
+    // the ladder fires 18 requests at once and everything else waits behind it.
+    const demand = demandPerMin('lite');
+    expect(demand).toBeLessThanOrEqual(RATE_BUDGET_PER_MIN.liteApi * 0.9);
+  });
+
+  it('still refreshes liquidity often enough to be worth showing', () => {
+    expect(FEED_PROFILES.lite.depth).toBeLessThanOrEqual(60_000);
   });
 });
