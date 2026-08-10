@@ -158,7 +158,13 @@ export class MarketFeeds {
       }),
     ];
 
-    this.#installQuoteTier(Boolean(options.apiKey));
+    // Only use the keyed host when the plan actually beats the keyless budget.
+    // A free-plan key allows 1 RPS — less than lite-api gives away — so trying
+    // it first would mean throttling and downgrading on every single boot.
+    const keyWorthUsing =
+      Boolean(options.apiKey) &&
+      budgetForRps(options.rps) > RATE_BUDGET_PER_MIN.liteApi;
+    this.#installQuoteTier(keyWorthUsing);
   }
 
   start(): void {

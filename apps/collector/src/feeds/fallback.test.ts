@@ -104,6 +104,17 @@ afterEach(() => {
 });
 
 describe('host selection', () => {
+  it('ignores a free-plan key — it buys less than the keyless host', async () => {
+    // Trying it anyway would mean a throttle-and-downgrade cycle every boot.
+    const h = harness({ apiKey: 'free-tier', rps: 1 });
+    h.feeds.start();
+    await settle();
+    h.feeds.stop();
+
+    expect(h.hosts).not.toContain('https://api.jup.ag');
+    expect(h.feeds.diagnostics().profile).toBe('lite');
+  });
+
   it('uses the keyless host when no key is configured', async () => {
     const h = harness({});
     h.feeds.start();
