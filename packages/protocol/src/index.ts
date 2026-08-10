@@ -157,22 +157,53 @@ export type ClientMessage = { readonly type: 'ping'; readonly t: number };
 // ---------------------------------------------------------------------------
 
 /**
- * Ladder sizes in SOL. Log-spaced so the near-touch region has resolution
- * while still reaching the size where impact becomes visible (~0.35% at 50k,
- * measured 2026-08-10).
+ * Ladder sizes in SOL, log-spaced: resolution near the touch where the curve
+ * bends, reach at the top where the wall threshold lands.
+ *
+ * Measured 2026-08-10 at SOL ~$76. The book is markedly asymmetric — selling
+ * 100k costs -0.80% while buying the same size costs +4.27% — so the ladder has
+ * to run past 100k for the bid side to cross 1% at all. Above roughly 100k the
+ * ask leg has no route and simply drops out; a partial ladder is expected here,
+ * not an error.
+ *
+ * Every rung costs one upstream request on each side, so length is charged
+ * directly against the rate budget. Nine is the most that fits.
  */
 export const DEPTH_LADDER_SOL = [
-  10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000,
+  10, 50, 200, 1_000, 4_000, 12_000, 35_000, 75_000, 150_000,
 ] as const;
 
 /** Wall totals are measured out to this much price impact. */
 export const WALL_IMPACT_PCT = 0.01;
 
-export const FEED_INTERVALS_MS = {
-  price: 1_000,
-  depth: 5_000,
-  candles: 60_000,
+/**
+ * Sustained request budget per upstream host, requests per minute.
+ *
+ * Measured 2026-08-10: lite-api serves 60/min cleanly and starts returning 429
+ * at around 125/min. datapi took 131/min without complaint. The keyless numbers
+ * sit under the measured ceiling with margin, because the collector is the only
+ * consumer for every visitor — getting throttled takes the whole site down.
+ */
+export const RATE_BUDGET_PER_MIN = {
+  liteApi: 55,
+  keyedApi: 600,
+  dataApi: 90,
 } as const;
+
+/**
+ * Poll cadences. Without a key the whole site shares 55 requests a minute, so
+ * price gets half the budget and depth takes the rest: one ladder is 18
+ * requests, which at 45s is 24/min.
+ *
+ * A key raises the ceiling enough that both can run at their natural rate. Get
+ * one free at portal.jup.ag and set JUPITER_API_KEY.
+ */
+export const FEED_PROFILES = {
+  lite: { price: 2_000, depth: 45_000, trades: 1_000, candles: 60_000 },
+  keyed: { price: 1_000, depth: 10_000, trades: 1_000, candles: 60_000 },
+} as const;
+
+export type FeedProfile = keyof typeof FEED_PROFILES;
 
 /** Server -> client broadcast rate. */
 export const BROADCAST_HZ = 10;

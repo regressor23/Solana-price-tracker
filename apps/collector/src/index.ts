@@ -5,6 +5,7 @@ import path from 'node:path';
 import { PAIR_LABEL, PROTOCOL_VERSION } from '@sol-warzone/protocol';
 
 import { config } from './config.js';
+import { MarketFeeds } from './feeds/index.js';
 import { Hub } from './hub.js';
 import { createStaticServer } from './static.js';
 
@@ -44,7 +45,7 @@ const server = http.createServer((req, res) => {
       protocol: PROTOCOL_VERSION,
       env: config.env,
       web: webBundlePresent ? 'ok' : 'missing',
-      status: hub.status,
+      status: feeds.diagnostics().status,
       clients: hub.clientCount,
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       jupiter: config.jupiter.apiKey ? 'keyed' : 'lite',
@@ -52,8 +53,16 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  void serveStatic(url, res).then((served) => {
+  // Raw feed state, for answering "is the data wrong or is the battle wrong?"
+  if (url === '/api/diagnostics') {
+    json(res, 200, feeds.diagnostics());
+    return;
+  }
+
+  void serveStatic(url, res).then(async (served) => {
     if (served) return;
+    // /debug is a client-side route; serve the app shell so a direct hit works.
+    if (url.split('?')[0] === '/debug' && (await serveStatic('/', res))) return;
     json(res, 404, {
       error: 'not_found',
       hint: webBundlePresent
@@ -66,6 +75,16 @@ const server = http.createServer((req, res) => {
 
 const hub = new Hub(server, config.heartbeatMs);
 
+const feeds = new MarketFeeds({
+  baseUrl: config.jupiter.baseUrl,
+  dataUrl: config.jupiter.dataUrl,
+  ...(config.jupiter.apiKey ? { apiKey: config.jupiter.apiKey } : {}),
+  publish: (event) => hub.publish(event),
+  setStatus: (status, detail) => hub.setStatus(status, detail),
+});
+
+hub.onSnapshotRequest(() => feeds.snapshot());
+
 server.listen(config.port, config.host, () => {
   console.log(
     `[collector] ${PAIR_LABEL} · http://${config.host}:${config.port} · ws /ws · jupiter=${config.jupiter.baseUrl}`,
@@ -76,10 +95,12 @@ server.listen(config.port, config.host, () => {
         'Run `npm run build` at the repo root. Every non-/healthz request will 404.',
     );
   }
+  feeds.start();
 });
 
 const shutdown = (signal: string): void => {
   console.log(`[collector] ${signal} — shutting down`);
+  feeds.stop();
   void hub.close().then(() => {
     server.close(() => process.exit(0));
   });

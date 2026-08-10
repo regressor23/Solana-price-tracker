@@ -7,8 +7,34 @@ Implementation plan and research notes: [PLAN.md](./PLAN.md).
 
 ## Status
 
-**Phase 0 — scaffold.** Monorepo, shared wire contract, WebSocket transport,
-Railway deploy. No market data and no battlefield yet; those are phases 1 and 4.
+**Phase 1 — live data, no graphics.** Price, liquidity curve, per-swap flow and
+candles from Jupiter, broadcast over the socket. Raw readout at `/debug`. The
+battlefield itself is phase 4.
+
+## Where the data comes from
+
+|           | Endpoint                    | Notes                                       |
+| --------- | --------------------------- | ------------------------------------------- |
+| Price     | `lite-api` `/price/v3`      | Deduplicated on the reported slot           |
+| Liquidity | `lite-api` `/swap/v1/quote` | Ladder of quotes — Solana has no order book |
+| Trades    | `datapi` `/v1/txs/{mint}`   | Real per-swap flow, free, no key            |
+| Candles   | `datapi` `/v2/charts`       | 1m OHLCV, **bounds in milliseconds**        |
+
+The liquidity curve is the order-book substitute: quoting the same SOL size in
+both directions gives the average fill price each way, which has the shape of a
+depth chart and describes real executable liquidity across every DEX at once.
+Both legs fix the SOL amount — ExactIn selling, ExactOut buying — so the rungs
+are comparable. Above roughly 100k SOL the buy leg has no route and drops out;
+a partial ladder is expected, not an error.
+
+Trade flow covers SOL against everything rather than SOL/USDC alone. The
+endpoint has no pool filter and the pool registry resolves only a fraction of
+the venues carrying flow, so the HUD says "aggregated" — as the reference does.
+
+**The rate limit is the binding constraint.** Measured 2026-08-10: keyless
+`lite-api` serves ~60 requests a minute and 429s at ~125, while one liquidity
+ladder costs 18. Set `JUPITER_API_KEY` (free, `portal.jup.ag`) and the collector
+switches host, budget and cadence on its own.
 
 ## Layout
 
@@ -25,9 +51,10 @@ Single origin means no CORS and no cross-origin WebSocket to configure.
 ## Why a backend at all
 
 The reference implementation this is modelled on connects browsers straight to
-Binance, which is free and unmetered. Jupiter is not: a depth ladder is 24 quote
-requests, so 1000 visitors doing that themselves would be banned within seconds.
-One collector makes the requests once and broadcasts the result. See PLAN.md §7.
+Binance, which is free and unmetered. Jupiter is not: one liquidity ladder is 18
+quote requests against a ceiling of about 60 a minute, so a handful of visitors
+doing it themselves would be throttled within seconds. One collector makes the
+requests once and broadcasts the result. See PLAN.md §7.
 
 ## Local development
 
@@ -44,8 +71,9 @@ npm run dev            # collector on :8080, watch mode
 npm run dev:web        # Vite on :5173, proxies /ws to the collector
 ```
 
-No API keys are needed. Copy `.env.example` to `.env` to raise the polling rate
-or enable the per-swap feed.
+No API keys are needed to run it. Copy `.env.example` to `.env` and set
+`JUPITER_API_KEY` to lift the rate ceiling — everything still works without it,
+just at a slower cadence.
 
 ## Checks
 
@@ -88,8 +116,8 @@ its own origin, so a separate web service is redundant — and splitting them
 would mean cross-origin WebSocket and CORS for no gain.
 
 Railway builds from `railway.json` with Nixpacks: `npm run build`, then
-`npm start`, health-gated on `/healthz`. Set `JUPITER_API_KEY` and
-`HELIUS_API_KEY` as service variables when you want the faster feeds.
+`npm start`, health-gated on `/healthz`. Set `JUPITER_API_KEY` as a service
+variable to run the faster cadence.
 
 `/healthz` returns 503 when `NODE_ENV=production` and no client bundle is
 present. A collector with nothing to serve is not healthy, and failing the gate

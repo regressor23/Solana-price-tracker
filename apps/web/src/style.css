@@ -171,6 +171,129 @@ body {
   color: var(--muted);
 }
 
+/* ----------------------------------------------------------- debug route */
+
+/* Instrument panel, not a design. Everything is monospace and tabular so a
+   number that changes shape is a number that changed value. */
+
+body.debug .shell {
+  grid-template-rows: 1fr;
+}
+
+body.debug .stage {
+  display: block;
+  place-items: initial;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 3rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dbg__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.dbg__badge {
+  color: var(--text);
+  text-transform: uppercase;
+}
+
+.dbg__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.dbg__section {
+  border: 1px solid var(--line);
+  padding: 0.7rem 0.85rem;
+  background: var(--panel);
+  min-width: 0;
+}
+
+.dbg__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.dbg__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.12rem 0;
+}
+
+.dbg__label {
+  color: var(--muted);
+}
+
+.dbg__value[data-tone='up'],
+.dbg__trade[data-side='buy'] {
+  color: var(--nexus);
+}
+
+.dbg__value[data-tone='down'],
+.dbg__trade[data-side='sell'] {
+  color: var(--orc);
+}
+
+.dbg__ladder {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.1rem 0.6rem;
+  overflow-x: auto;
+}
+
+.dbg__lh {
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.dbg__ladder > span:not(.dbg__lh) {
+  text-align: right;
+}
+
+.dbg__ladder > span:nth-child(4n + 1) {
+  text-align: left;
+}
+
+.dbg__trades {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dbg__trade {
+  display: grid;
+  grid-template-columns: 5rem 3.5rem 6rem 6rem 1fr;
+  gap: 0.5rem;
+}
+
+.dbg__trade[data-tier='whale'] {
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dbg__trade[data-tier='heavy'] {
+  background: rgba(255, 255, 255, 0.03);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
