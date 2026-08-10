@@ -56,6 +56,11 @@ npm run check          # format + lint + typecheck + test
 CI runs the same thing on every push and pull request, then builds, then boots
 the production server and smoke-tests it.
 
+`check` compiles `packages/protocol` first. Type-aware linting and the tests
+both resolve that package through its `dist/`, so on a fresh clone every rule
+that needs type information would otherwise fail with "type that cannot be
+resolved" rather than a real finding.
+
 Use `npm run clean` rather than deleting `dist` by hand. `tsc --build` trusts
 its `.tsbuildinfo`, so after a manual `rm -rf dist` it decides the project is
 already current and emits nothing — leaving you debugging an empty directory.
