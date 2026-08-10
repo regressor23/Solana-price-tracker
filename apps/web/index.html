@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark" />
+    <title>SOL Warzone — live SOL/USDC order flow</title>
+    <meta
+      name="description"
+      content="Live SOL/USDC order flow from Jupiter, rendered as a battle between Orcs and the Nexus."
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <span class="clock" id="clock">--:--:--</span>
+        <div class="pair">
+          <span class="pair__label" id="pairLabel">SOL/USDC · JUPITER</span>
+          <span class="pair__price" id="price">$—</span>
+          <span class="pair__tick" id="tick">—</span>
+        </div>
+        <div class="feed-state">
+          <span class="feed-state__label">FEED</span>
+          <span class="feed-state__value" id="status" data-status="offline"
+            >offline</span
+          >
+        </div>
+      </header>
+
+      <section class="stage" id="stage">
+        <p class="stage__note" id="stageNote">
+          Phase 0 — transport only. No battle yet.
+        </p>
+      </section>
+
+      <footer class="statusbar">
+        <span id="log">waiting for collector…</span>
+      </footer>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

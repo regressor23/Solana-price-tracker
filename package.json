@@ -1,0 +1,38 @@
+{
+  "name": "sol-warzone",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live SOL/USDC order-flow visualised as a 3D battle: Orcs vs Nexus",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @sol-warzone/protocol && npm run build -w @sol-warzone/web && npm run build -w @sol-warzone/collector",
+    "start": "npm run start -w @sol-warzone/collector",
+    "dev": "npm run dev -w @sol-warzone/collector",
+    "dev:web": "npm run dev -w @sol-warzone/web",
+    "typecheck": "tsc --noEmit -p packages/protocol && tsc --noEmit -p apps/collector && tsc --noEmit -p apps/web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^4.1.10"
+  }
+}

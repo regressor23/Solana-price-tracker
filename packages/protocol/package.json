@@ -1,0 +1,22 @@
+{
+  "name": "@sol-warzone/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared wire contract between collector and web client",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "clean": "tsc --build tsconfig.build.json --clean"
+  }
+}

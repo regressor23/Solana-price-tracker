@@ -1,0 +1,179 @@
+/*
+ * Phase 0 shell. The palette is already the one from PLAN.md §6:
+ * orc red on one end, nexus cyan on the other.
+ */
+
+:root {
+  --bg: #07090c;
+  --panel: #0d1116;
+  --line: #1b222b;
+  --text: #e8eef5;
+  --muted: #6c7a8a;
+
+  --orc: #c4472c;
+  --nexus: #00d4ff;
+
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100dvh;
+}
+
+/* ---------------------------------------------------------------- topbar */
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.clock {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.pair {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
+.pair__label {
+  font-size: 0.65rem;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.pair__price {
+  font-family: var(--font-mono);
+  font-size: clamp(1.6rem, 5vw, 2.75rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.pair__tick {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.pair__tick[data-dir='up'] {
+  color: var(--nexus);
+}
+
+.pair__tick[data-dir='down'] {
+  color: var(--orc);
+}
+
+.feed-state {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.feed-state__label {
+  color: var(--muted);
+}
+
+.feed-state__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.feed-state__value::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.feed-state__value[data-status='live'] {
+  color: #37d67a;
+}
+
+.feed-state__value[data-status='sync'],
+.feed-state__value[data-status='connected'] {
+  color: #d6a437;
+}
+
+.feed-state__value[data-status='degraded'],
+.feed-state__value[data-status='demo'] {
+  color: var(--orc);
+}
+
+.feed-state__value[data-status='offline'] {
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------------- stage */
+
+.stage {
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% 120%, rgba(0, 212, 255, 0.07), transparent 60%),
+    radial-gradient(120% 80% at 50% -20%, rgba(196, 71, 44, 0.07), transparent 60%);
+}
+
+.stage__note {
+  font-size: 0.8rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+/* ------------------------------------------------------------- statusbar */
+
+.statusbar {
+  padding: 0.6rem 1.25rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

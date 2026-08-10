@@ -1,0 +1,21 @@
+{
+  "name": "@sol-warzone/collector",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single upstream consumer for Jupiter data + WebSocket fan-out",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "clean": "tsc --build tsconfig.build.json --clean",
+    "dev": "node --watch --experimental-strip-types src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@sol-warzone/protocol": "*",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}
