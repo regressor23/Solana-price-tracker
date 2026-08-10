@@ -5,6 +5,7 @@
   "type": "module",
   "description": "3D battlefield client",
   "scripts": {
+    "prebuild": "npm run build -w @sol-warzone/protocol",
     "build": "vite build",
     "dev": "vite",
     "preview": "vite preview",

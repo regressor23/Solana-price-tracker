@@ -6,6 +6,7 @@
   "description": "Single upstream consumer for Jupiter data + WebSocket fan-out",
   "main": "./dist/index.js",
   "scripts": {
+    "prebuild": "npm run build -w @sol-warzone/protocol && npm run build -w @sol-warzone/web",
     "build": "tsc --build tsconfig.build.json",
     "clean": "tsc --build tsconfig.build.json --clean",
     "dev": "node --watch --experimental-strip-types src/index.ts",

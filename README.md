@@ -53,11 +53,35 @@ or enable the per-swap feed.
 npm run check          # format + lint + typecheck + test
 ```
 
+## Build order
+
+`packages/protocol` compiles to `dist/` and both apps import it from there, so
+it has to be built first. Each package declares that itself via a `prebuild`
+hook rather than relying on the root script, which means any of these work:
+
+```bash
+npm run build                                  # root, builds everything
+npm run build --workspace=@sol-warzone/web     # pulls in protocol
+npm run build --workspace=@sol-warzone/collector   # pulls in protocol + web
+```
+
+That matters because a platform that auto-detects workspaces will pick one of
+the scoped commands on its own. Protocol may compile more than once in a
+cascade; `tsc --build` is incremental, so the repeats are no-ops.
+
 ## Deploy
 
-Railway builds from `railway.json` with Nixpacks: `npm run build` then
+**One Railway service, not two.** The collector serves the client bundle from
+its own origin, so a separate web service is redundant — and splitting them
+would mean cross-origin WebSocket and CORS for no gain.
+
+Railway builds from `railway.json` with Nixpacks: `npm run build`, then
 `npm start`, health-gated on `/healthz`. Set `JUPITER_API_KEY` and
 `HELIUS_API_KEY` as service variables when you want the faster feeds.
+
+`/healthz` returns 503 when `NODE_ENV=production` and no client bundle is
+present. A collector with nothing to serve is not healthy, and failing the gate
+is better than passing it and then 404ing every visitor.
 
 ## Licence
 
