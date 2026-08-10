@@ -80,6 +80,7 @@ const feeds = new MarketFeeds({
   liteUrl: config.jupiter.liteUrl,
   keyedUrl: config.jupiter.keyedUrl,
   dataUrl: config.jupiter.dataUrl,
+  rps: config.jupiter.rps,
   ...(config.jupiter.apiKey ? { apiKey: config.jupiter.apiKey } : {}),
   publish: (event) => hub.publish(event),
   setStatus: (status, detail) => hub.setStatus(status, detail),

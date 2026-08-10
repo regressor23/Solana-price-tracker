@@ -61,6 +61,33 @@ describe('jupiter hosts', () => {
     );
   });
 
+  it('assumes the free plan when a key is present but no plan is declared', () => {
+    // The trap this exists for: a free-plan key allows 1 RPS, the same as the
+    // keyless host already gives away. Assuming a key means speed is how the
+    // collector ended up throttled in production.
+    const { jupiter } = load({ JUPITER_API_KEY: 'k' });
+    expect(jupiter.plan).toBe('free');
+    expect(jupiter.rps).toBe(1);
+  });
+
+  it('assumes keyless when there is no key at all', () => {
+    expect(load().jupiter.plan).toBe('keyless');
+  });
+
+  it('takes the declared plan when one is given', () => {
+    const { jupiter } = load({ JUPITER_API_KEY: 'k', JUPITER_PLAN: 'developer' });
+    expect(jupiter.plan).toBe('developer');
+    expect(jupiter.rps).toBe(10);
+  });
+
+  it('accepts a plan name in any case', () => {
+    expect(load({ JUPITER_PLAN: 'Developer' }).jupiter.plan).toBe('developer');
+  });
+
+  it('rejects a plan it does not know rather than guessing a limit', () => {
+    expect(() => load({ JUPITER_PLAN: 'unlimited' })).toThrow(/JUPITER_PLAN/);
+  });
+
   it('treats a whitespace-only key as absent', () => {
     // A variable left blank in the Railway UI must not select the keyed host,
     // which rejects unauthenticated callers harder than the keyless one does.

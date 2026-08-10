@@ -180,30 +180,59 @@ export const WALL_IMPACT_PCT = 0.01;
  * Sustained request budget per upstream host, requests per minute.
  *
  * Measured 2026-08-10: lite-api serves 60/min cleanly and starts returning 429
- * at around 125/min. datapi took 131/min without complaint. The keyless numbers
- * sit under the measured ceiling with margin, because the collector is the only
- * consumer for every visitor — getting throttled takes the whole site down.
+ * at around 125/min. datapi took 131/min without complaint. These sit under the
+ * measured ceiling with margin, because the collector is the only consumer for
+ * every visitor — getting throttled takes the whole site down.
  */
 export const RATE_BUDGET_PER_MIN = {
   liteApi: 55,
-  keyedApi: 600,
   dataApi: 90,
 } as const;
 
 /**
- * Poll cadences. Without a key the whole site shares 55 requests a minute, so
- * price gets half the budget and depth takes the rest: one ladder is 18
- * requests, which at 45s is 24/min.
+ * Requests per second Jupiter allows, by plan. Published tiers, 2026-08-11.
  *
- * A key raises the ceiling enough that both can run at their natural rate. Get
- * one free at portal.jup.ag and set JUPITER_API_KEY.
+ * The free plan is the trap: an API key on it allows 1 RPS, which is the same
+ * 60/min the keyless lite-api host already gives away. A key is worth nothing
+ * here until a paid plan sits behind it, so the collector asks for the plan
+ * rather than inferring capability from the mere presence of a key.
+ */
+export const JUPITER_PLAN_RPS = {
+  keyless: 0.5,
+  free: 1,
+  developer: 10,
+  launch: 50,
+  pro: 150,
+} as const;
+
+export type JupiterPlan = keyof typeof JUPITER_PLAN_RPS;
+
+/** Fraction of the plan's headroom to actually use. */
+const SAFETY = 0.8;
+
+export const budgetForRps = (rps: number): number =>
+  Math.max(12, Math.round(rps * 60 * SAFETY));
+
+/**
+ * Poll cadences.
+ *
+ * `lite` fits inside 55 requests a minute: price takes half the budget and one
+ * 18-request depth ladder every 45s takes most of the rest. `fast` needs about
+ * 168/min — roughly 2.8 RPS — so it is only reachable on a paid plan.
  */
 export const FEED_PROFILES = {
   lite: { price: 2_000, depth: 45_000, trades: 1_000, candles: 60_000 },
-  keyed: { price: 1_000, depth: 10_000, trades: 1_000, candles: 60_000 },
+  fast: { price: 1_000, depth: 10_000, trades: 1_000, candles: 60_000 },
 } as const;
 
 export type FeedProfile = keyof typeof FEED_PROFILES;
+
+/** Requests per minute the `fast` cadence demands: 60 price + 6 ladders. */
+export const FAST_PROFILE_DEMAND_PER_MIN = 60 + 6 * DEPTH_LADDER_SOL.length * 2;
+
+/** The fast cadence is only honest when the plan can actually sustain it. */
+export const profileForRps = (rps: number): FeedProfile =>
+  budgetForRps(rps) >= FAST_PROFILE_DEMAND_PER_MIN ? 'fast' : 'lite';
 
 /** Server -> client broadcast rate. */
 export const BROADCAST_HZ = 10;

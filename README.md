@@ -31,10 +31,17 @@ Trade flow covers SOL against everything rather than SOL/USDC alone. The
 endpoint has no pool filter and the pool registry resolves only a fraction of
 the venues carrying flow, so the HUD says "aggregated" — as the reference does.
 
-**The rate limit is the binding constraint.** Measured 2026-08-10: keyless
-`lite-api` serves ~60 requests a minute and 429s at ~125, while one liquidity
-ladder costs 18. Set `JUPITER_API_KEY` (free, `portal.jup.ag`) and the collector
-switches host, budget and cadence on its own.
+**The rate limit is the binding constraint**, and a free API key does not lift
+it. Jupiter allows 0.5 RPS keyless, 1 RPS on the free plan, and 10 RPS on the
+paid Developer tier. Measured keyless `lite-api` sustains ~60/min and 429s at
+~125 — which is the free plan's 1 RPS, so a free key buys nothing. One liquidity
+ladder costs 18 requests.
+
+The cadence therefore comes from `JUPITER_PLAN`, not from whether a key exists:
+`free`/`keyless` get price every 2s and a ladder every 45s, `developer` and up
+get 1s and 10s. If the keyed host throttles below what the keyless one sustains,
+or rejects the key outright, the collector falls back on its own and says why in
+`/api/diagnostics`.
 
 ## Layout
 

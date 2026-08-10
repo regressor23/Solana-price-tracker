@@ -23,6 +23,8 @@ function harness(options: {
   /** Answer the keyed host with 429 — a key that authenticates but is capped. */
   throttleKeyed?: boolean;
   apiKey?: string;
+  /** Plan headroom. Defaults to the Developer tier so `fast` is reachable. */
+  rps?: number;
 }): Harness {
   const hosts: string[] = [];
   const statuses: Harness['statuses'] = [];
@@ -77,6 +79,7 @@ function harness(options: {
     liteUrl: 'https://lite-api.jup.ag',
     keyedUrl: 'https://api.jup.ag',
     dataUrl: 'https://datapi.jup.ag',
+    rps: options.rps ?? 10,
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
     publish: (event) => events.push(event),
     setStatus: (status, detail) =>
@@ -118,7 +121,7 @@ describe('host selection', () => {
     h.feeds.stop();
 
     expect(h.hosts).toContain('https://api.jup.ag');
-    expect(h.feeds.diagnostics().profile).toBe('keyed');
+    expect(h.feeds.diagnostics().profile).toBe('fast');
     expect(h.feeds.diagnostics().keyRejected).toBe(false);
   });
 });

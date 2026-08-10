@@ -1,6 +1,8 @@
 import {
   FEED_PROFILES,
   RATE_BUDGET_PER_MIN,
+  budgetForRps,
+  profileForRps,
   type Candle,
   type FeedStatus,
   type MarketEvent,
@@ -22,6 +24,8 @@ export interface MarketFeedsOptions {
   keyedUrl: string;
   dataUrl: string;
   apiKey?: string;
+  /** Requests per second the configured Jupiter plan allows. */
+  rps: number;
   publish: (event: MarketEvent) => void;
   setStatus: (status: FeedStatus, detail?: string) => void;
   http?: HttpClient;
@@ -102,6 +106,7 @@ export class MarketFeeds {
   #depth!: DepthFeed;
   #quotePollers: Poller[] = [];
   #profile: keyof typeof FEED_PROFILES = 'lite';
+  #keyed = false;
   #quoteHost = '';
   #keyRejected = false;
   #downgradeReason: string | null = null;
@@ -244,7 +249,7 @@ export class MarketFeeds {
    * means the upstream has refused repeatedly at rates the keyless host allows.
    */
   #checkKeyIsEarningItsPlace(): boolean {
-    if (this.#profile !== 'keyed') return false;
+    if (!this.#keyed) return false;
     const rate = this.#quoteHttp.budgetPerMin;
     if (rate === null || rate > RATE_BUDGET_PER_MIN.liteApi / 2) return false;
     if (this.#quoteHttp.throttleHits < KEYED_THROTTLE_TOLERANCE) return false;
@@ -256,8 +261,11 @@ export class MarketFeeds {
   }
 
   #installQuoteTier(keyed: boolean): void {
-    const { apiKey, keyedUrl, liteUrl, http } = this.#options;
-    this.#profile = keyed ? 'keyed' : 'lite';
+    const { apiKey, keyedUrl, liteUrl, http, rps } = this.#options;
+    // The plan decides the cadence. A key on the free plan buys 1 RPS, which is
+    // what the keyless host already allows, so it must not unlock a faster one.
+    this.#profile = keyed ? profileForRps(rps) : 'lite';
+    this.#keyed = keyed;
     this.#quoteHost = keyed ? keyedUrl : liteUrl;
     const cadence = FEED_PROFILES[this.#profile];
 
@@ -265,9 +273,7 @@ export class MarketFeeds {
       http ??
       new HttpClient({
         ...(keyed && apiKey ? { apiKey } : {}),
-        budgetPerMin: keyed
-          ? RATE_BUDGET_PER_MIN.keyedApi
-          : RATE_BUDGET_PER_MIN.liteApi,
+        budgetPerMin: keyed ? budgetForRps(rps) : RATE_BUDGET_PER_MIN.liteApi,
       });
 
     const client = this.#quoteHttp;
@@ -299,7 +305,7 @@ export class MarketFeeds {
 
   /** Rebuild the quote tier without a key, keeping the process running. */
   #downgrade(reason: string): void {
-    if (this.#keyRejected || this.#profile !== 'keyed') return;
+    if (this.#keyRejected || !this.#keyed) return;
     this.#keyRejected = true;
     this.#downgradeReason = reason;
 
