@@ -18,7 +18,12 @@ interface Harness {
   events: MarketEvent[];
 }
 
-function harness(options: { rejectKeyed: boolean; apiKey?: string }): Harness {
+function harness(options: {
+  rejectKeyed?: boolean;
+  /** Answer the keyed host with 429 — a key that authenticates but is capped. */
+  throttleKeyed?: boolean;
+  apiKey?: string;
+}): Harness {
   const hosts: string[] = [];
   const statuses: Harness['statuses'] = [];
   const events: MarketEvent[] = [];
@@ -29,6 +34,11 @@ function harness(options: { rejectKeyed: boolean; apiKey?: string }): Harness {
 
     if (options.rejectKeyed && origin === 'https://api.jup.ag') {
       return Promise.resolve(new Response('invalid api key', { status: 401 }));
+    }
+    if (options.throttleKeyed && origin === 'https://api.jup.ag') {
+      return Promise.resolve(
+        new Response('{}', { status: 429, headers: { 'retry-after': '0' } }),
+      );
     }
 
     const body = pathname.startsWith('/price/v3')
@@ -92,7 +102,7 @@ afterEach(() => {
 
 describe('host selection', () => {
   it('uses the keyless host when no key is configured', async () => {
-    const h = harness({ rejectKeyed: false });
+    const h = harness({});
     h.feeds.start();
     await settle();
     h.feeds.stop();
@@ -102,7 +112,7 @@ describe('host selection', () => {
   });
 
   it('uses the keyed host when a key is accepted', async () => {
-    const h = harness({ rejectKeyed: false, apiKey: 'good' });
+    const h = harness({ apiKey: 'good' });
     h.feeds.start();
     await settle();
     h.feeds.stop();
@@ -165,6 +175,26 @@ describe('rejected key', () => {
     // Still keyless, still one downgrade — not a restart loop.
     expect(h.feeds.diagnostics().profile).toBe('lite');
     expect(h.feeds.diagnostics().keyRejected).toBe(afterFirst.keyRejected);
+  });
+
+  it('abandons a key that authenticates but buys no headroom', async () => {
+    // Seen in production: api.jup.ag took the key without complaint and then
+    // throttled below what the keyless host sustains happily. Authenticating is
+    // not the same as helping.
+    const h = harness({ throttleKeyed: true, apiKey: 'weak' });
+    h.feeds.start();
+
+    for (let i = 0; i < 60; i++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await settle();
+      if (h.feeds.diagnostics().profile === 'lite') break;
+    }
+    h.feeds.stop();
+
+    const diagnostics = h.feeds.diagnostics();
+    expect(diagnostics.profile).toBe('lite');
+    expect(diagnostics.upstream.quoteHost).toBe('https://lite-api.jup.ag');
+    expect(diagnostics.downgradeReason).toMatch(/throttled/);
   });
 
   it('never returns to the keyed host on its own', async () => {

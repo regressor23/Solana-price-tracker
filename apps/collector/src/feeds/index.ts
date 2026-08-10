@@ -38,11 +38,26 @@ export interface MarketFeedsOptions {
 const STALE_AFTER_POLLS = 8;
 /** Trades are bursty; absence is normal, so this is generous. */
 const RECENT_TRADES = 50;
+/**
+ * How many refusals to absorb before concluding a key is not buying headroom.
+ * High enough to ride out a transient bad patch on a key that is genuinely fine.
+ */
+const KEYED_THROTTLE_TOLERANCE = 10;
+/**
+ * How often to judge the upstream independently of any poll finishing.
+ *
+ * Severe throttling makes a poll take minutes — the depth ladder is 18 requests
+ * and each one waits for a token — so a check that only runs when a tick
+ * completes would leave the collector stuck on a bad host for exactly as long
+ * as that host is worst.
+ */
+const SUPERVISOR_MS = 5_000;
 
 export interface FeedDiagnostics {
   status: FeedStatus;
   profile: string;
   keyRejected: boolean;
+  downgradeReason: string | null;
   refUsd: number;
   volumePerMinute: number | null;
   upstream: {
@@ -89,7 +104,9 @@ export class MarketFeeds {
   #profile: keyof typeof FEED_PROFILES = 'lite';
   #quoteHost = '';
   #keyRejected = false;
+  #downgradeReason: string | null = null;
   #started = false;
+  #supervisor: ReturnType<typeof setInterval> | undefined;
 
   #recentTrades: Trade[] = [];
   #status: FeedStatus = 'sync';
@@ -144,6 +161,10 @@ export class MarketFeeds {
     for (const poller of [...this.#quotePollers, ...this.#dataPollers]) {
       poller.start();
     }
+    this.#supervisor = setInterval(() => {
+      this.#checkKeyIsEarningItsPlace();
+    }, SUPERVISOR_MS);
+    this.#supervisor.unref?.();
   }
 
   stop(): void {
@@ -151,6 +172,8 @@ export class MarketFeeds {
     for (const poller of [...this.#quotePollers, ...this.#dataPollers]) {
       poller.stop();
     }
+    if (this.#supervisor !== undefined) clearInterval(this.#supervisor);
+    this.#supervisor = undefined;
   }
 
   /** Warm-start payload for a client that just connected. */
@@ -171,6 +194,7 @@ export class MarketFeeds {
       status: this.#status,
       profile: this.#profile,
       keyRejected: this.#keyRejected,
+      downgradeReason: this.#downgradeReason,
       refUsd: this.#trades.refUsd,
       volumePerMinute: this.#candles.volumePerMinute,
       upstream: {
@@ -204,9 +228,32 @@ export class MarketFeeds {
     // A rejected key is not a transient failure. Retrying it forever leaves the
     // site dead, and the keyed host is stricter than the keyless one for
     // unauthenticated callers, so staying put is the worst of both.
-    if (isAuthFailure(error)) this.#dropRejectedKey();
+    if (isAuthFailure(error)) {
+      this.#downgrade('api key rejected — running keyless');
+    }
     this.#refreshStatus();
   };
+
+  /**
+   * Abandon the keyed host if it cannot beat the keyless one.
+   *
+   * A key that authenticates is not automatically a key that helps. Observed in
+   * production: api.jup.ag accepted the key without complaint but throttled
+   * below the floor anyway, which is worse than the 55/min the keyless host
+   * sustains happily. The adaptive rate collapsing that far is the signal — it
+   * means the upstream has refused repeatedly at rates the keyless host allows.
+   */
+  #checkKeyIsEarningItsPlace(): boolean {
+    if (this.#profile !== 'keyed') return false;
+    const rate = this.#quoteHttp.budgetPerMin;
+    if (rate === null || rate > RATE_BUDGET_PER_MIN.liteApi / 2) return false;
+    if (this.#quoteHttp.throttleHits < KEYED_THROTTLE_TOLERANCE) return false;
+
+    this.#downgrade(
+      `keyed host throttled to ${Math.round(rate)}/min — keyless is faster`,
+    );
+    return true;
+  }
 
   #installQuoteTier(keyed: boolean): void {
     const { apiKey, keyedUrl, liteUrl, http } = this.#options;
@@ -251,21 +298,22 @@ export class MarketFeeds {
   }
 
   /** Rebuild the quote tier without a key, keeping the process running. */
-  #dropRejectedKey(): void {
+  #downgrade(reason: string): void {
     if (this.#keyRejected || this.#profile !== 'keyed') return;
     this.#keyRejected = true;
+    this.#downgradeReason = reason;
 
     console.warn(
-      '[collector] JUPITER_API_KEY was rejected — falling back to the keyless ' +
-        'host and the slower cadence. Check the key at portal.jup.ag.',
+      `[collector] ${reason}. Falling back to ${this.#options.liteUrl} at the ` +
+        'slower cadence. Check the key and its plan at portal.jup.ag.',
     );
 
     for (const poller of this.#quotePollers) poller.stop();
     this.#installQuoteTier(false);
     if (this.#started) for (const poller of this.#quotePollers) poller.start();
 
-    this.#setStatus('degraded', 'api key rejected — running keyless');
     this.#status = 'degraded';
+    this.#setStatus('degraded', reason);
   }
 
   /**
@@ -273,6 +321,12 @@ export class MarketFeeds {
    * gating "live" on them would flap; they only matter for the warm start.
    */
   #refreshStatus(): void {
+    // Runs on every tick, success or failure: the client often recovers from a
+    // 429 after retrying, so waiting for an outright poll failure would let the
+    // throttling go unnoticed. A downgrade rebuilds the pollers, so the status
+    // it just set is the authoritative one.
+    if (this.#checkKeyIsEarningItsPlace()) return;
+
     const lastOk = this.#quotePollers[0]?.lastOkAt ?? 0;
     const age = this.#now() - lastOk;
 
