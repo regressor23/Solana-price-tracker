@@ -15,6 +15,7 @@
     "@sol-warzone/protocol": "*"
   },
   "devDependencies": {
+    "happy-dom": "^20.11.2",
     "vite": "^8.2.1"
   }
 }

@@ -130,6 +130,20 @@ variable to run the faster cadence.
 present. A collector with nothing to serve is not healthy, and failing the gate
 is better than passing it and then 404ing every visitor.
 
+**Watch patterns must cover the whole repo.** Railway's monorepo detection
+scoped the service to `apps/collector/**`, so a commit touching only
+`packages/protocol` was marked SKIPPED and never deployed — production quietly
+kept running older code while the commit looked shipped. This service builds
+every workspace, so every path is relevant to it. `railway.json` declares
+`watchPatterns: ["**"]`; if the dashboard also has Watch Paths set, clear them,
+because dashboard settings win over the config file.
+
+After any deploy, confirm what is actually running rather than assuming:
+
+```bash
+curl -s https://<service>/api/diagnostics | grep -o '"profile":"[a-z]*"'
+```
+
 ## Licence
 
 MIT. Third-party 3D assets keep their own licences — see PLAN.md §8 step 27.
