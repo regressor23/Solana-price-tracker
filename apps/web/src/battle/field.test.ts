@@ -1,4 +1,4 @@
-import type { Pulse } from '@sol-warzone/protocol';
+import { BALANCE, type Pulse } from '@sol-warzone/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { BattleField } from './field.js';
@@ -303,6 +303,140 @@ describe('front line', () => {
     expect(average(f.units.filter((u) => u.faction === 'orc'))).toBeLessThan(
       settledOrcs,
     );
+  });
+});
+
+describe('frames that should not have been sent', () => {
+  // A pulse is seven bytes of binary decoded without a schema. Everything here
+  // is unreachable from a healthy server, which is precisely why none of it
+  // would be caught in production before it had been running for an hour.
+
+  it('will not grow the army past the pool, whatever the count says', () => {
+    // orcAlive is a u16 on the wire: it can say 65535 against a pool of 250.
+    // Reinforcement is a trickle, so the failure is not a spike — it is an
+    // array that grows at twenty-five a second for as long as the tab is open.
+    const f = field();
+    f.applyPulse(pulse(65_535, 65_535));
+    run(f, 20);
+
+    expect(f.countOf('orc')).toBeLessThanOrEqual(BALANCE.poolPerSide);
+    expect(f.countOf('nexus')).toBeLessThanOrEqual(BALANCE.poolPerSide);
+  });
+
+  it('keeps the front line on the field', () => {
+    // frontLine is fixed-point over an int16, so a corrupted frame decodes as
+    // far as ±3.27. Unclamped that is a front line off the end of the field,
+    // and both armies marching after it.
+    const f = field();
+    f.applyPulse(pulse(100, 100, 3.27));
+    run(f, 6);
+    expect(f.frontY).toBeGreaterThan(0);
+    expect(f.frontY).toBeLessThan(1);
+
+    f.applyPulse(pulse(100, 100, -3.27));
+    run(f, 6);
+    expect(f.frontY).toBeGreaterThan(0);
+    expect(f.frontY).toBeLessThan(1);
+  });
+
+  it('treats a number that is not one as the safest number it could be', () => {
+    // NaN compares false against everything, so a clamp written the obvious way
+    // passes it straight through — and a NaN front line is a camera and an army
+    // that never come back, because every later frame eases toward it.
+    const f = field();
+    f.applyPulse(pulse(100, 100));
+    run(f, 2);
+
+    f.applyPulse(pulse(Number.NaN, Number.NaN, Number.NaN));
+    run(f, 2);
+
+    expect(Number.isFinite(f.frontY)).toBe(true);
+    for (const unit of f.units) {
+      expect(Number.isFinite(unit.x)).toBe(true);
+      expect(Number.isFinite(unit.y)).toBe(true);
+    }
+  });
+
+  it('treats a negative count as zero rather than as a direction', () => {
+    const f = field();
+    f.applyPulse(pulse(100, 100));
+    run(f, 2);
+    f.applyPulse(pulse(-5, 100));
+    run(f, 2);
+    expect(f.countOf('orc')).toBe(0);
+  });
+
+  it('keeps every unit on the field, however hard the line pulls', () => {
+    const f = field();
+    f.applyPulse(pulse(200, 200, 1));
+    run(f, 20);
+    f.applyPulse(pulse(200, 200, -1));
+    run(f, 20);
+
+    for (const unit of f.units) {
+      expect(unit.x).toBeGreaterThanOrEqual(0);
+      expect(unit.x).toBeLessThanOrEqual(1);
+      expect(unit.y).toBeGreaterThan(-0.1);
+      expect(unit.y).toBeLessThan(1.1);
+    }
+  });
+});
+
+describe('a step of no time', () => {
+  it('changes nothing', () => {
+    const f = field();
+    f.applyPulse(pulse(120, 120));
+    run(f, 2);
+    const before = f.units.map((u) => `${u.id}:${u.x}:${u.y}:${u.state}`);
+
+    f.advance(0);
+    f.advance(-16);
+    f.advance(Number.NaN);
+
+    expect(f.units.map((u) => `${u.id}:${u.x}:${u.y}:${u.state}`)).toEqual(before);
+  });
+
+  it('does not hand the same deaths out twice', () => {
+    // Two animation frames can carry the same timestamp, and a renderer that
+    // plays `events` on every draw would fire a second burst of sparks over
+    // corpses that are already falling.
+    const f = field();
+    f.applyPulse(pulse(120, 120));
+    run(f, 3);
+    f.applyPulse(pulse(100, 120));
+    f.advance(1_000 / 60);
+    expect(f.events.filter((e) => e.kind === 'death')).toHaveLength(20);
+
+    f.advance(0);
+    expect(f.events).toHaveLength(0);
+  });
+});
+
+describe('the resync threshold', () => {
+  it('animates a gap it could have watched, and snaps at one it could not', () => {
+    // The boundary itself, because it is the number that decides between a
+    // second of visible fiction and a jump, and nothing else pins it.
+    const atLimit = field();
+    atLimit.applyPulse(pulse(200, 200));
+    run(atLimit, 2);
+    atLimit.applyPulse(pulse(160, 200), 100);
+    expect(atLimit.resyncs).toBe(1);
+
+    const overLimit = field();
+    overLimit.applyPulse(pulse(200, 200));
+    run(overLimit, 2);
+    overLimit.applyPulse(pulse(159, 200), 100);
+    expect(overLimit.resyncs).toBe(2);
+  });
+
+  it('counts both sides together, since both are on the same screen', () => {
+    // Thirty missing orcs and thirty new Nexus is sixty units of difference
+    // and reads as badly as sixty on one side.
+    const f = field();
+    f.applyPulse(pulse(200, 200));
+    run(f, 2);
+    f.applyPulse(pulse(170, 230), 100);
+    expect(f.resyncs).toBe(2);
   });
 });
 

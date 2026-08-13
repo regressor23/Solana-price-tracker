@@ -273,6 +273,98 @@ describe('the camera', () => {
   });
 });
 
+describe('a viewport with nothing in it', () => {
+  it('is ignored rather than turned into a NaN camera', () => {
+    // A collapsed grid cell and a hidden tab both report zero. An aspect of
+    // 0/0 poisons the projection matrix, and because every later frame eases
+    // toward the camera it never recovers once it has been there.
+    const { scene, field } = setup();
+    scene.setSize(0, 0);
+    field.applyPulse(pulse(100, 100));
+    drive(scene, field, 1);
+
+    expect(Number.isFinite(scene.camera.aspect)).toBe(true);
+    expect(Number.isFinite(scene.camera.position.x)).toBe(true);
+    expect(Number.isFinite(scene.camera.position.y)).toBe(true);
+    expect(Number.isFinite(scene.camera.position.z)).toBe(true);
+  });
+
+  it('takes a real size afterwards', () => {
+    const { scene } = setup();
+    scene.setSize(0, 0);
+    scene.setSize(1280, 720);
+    expect(scene.camera.aspect).toBeCloseTo(1280 / 720);
+  });
+});
+
+describe('over a long battle', () => {
+  it('never puts the camera under the ground it is looking at', () => {
+    // Twenty rounds of the line swinging end to end, at every preset. A camera
+    // below the terrain renders a screenful of hillside, which is
+    // indistinguishable from the scene having failed to load.
+    for (const preset of ['tactical', 'front', 'orbit'] as const) {
+      const { scene, field } = setup();
+      scene.setPreset(preset);
+      scene.setSize(1280, 720);
+      field.applyPulse(pulse(200, 200, 0));
+
+      for (let round = 0; round < 20; round++) {
+        const line = Math.sin(round) * 0.95;
+        field.applyPulse(pulse(200, 200, line), 100);
+        for (let i = 0; i < 60; i++) {
+          field.advance(1_000 / 60);
+          scene.update(field, STEP);
+          const { x, y, z } = scene.camera.position;
+          expect(y).toBeGreaterThan(groundHeight(x, z) + 2);
+        }
+      }
+    }
+  });
+
+  it('keeps the backdrop with the eye rather than leaving it behind', () => {
+    // The sky is a dome the camera sits inside. Anchored to the origin, a
+    // camera that travels far enough eventually looks at its inside seam.
+    const { scene, field } = setup();
+    field.applyPulse(pulse(200, 200, 0.9));
+    drive(scene, field, 8);
+
+    const sky = scene.scene.getObjectByName('sky')!;
+    expect(sky.position.distanceTo(scene.camera.position)).toBeLessThan(0.001);
+  });
+});
+
+describe('housekeeping', () => {
+  it('builds each part of the scene once', () => {
+    // A double-add is invisible — the second copy lands exactly on the first —
+    // until it is a second draw call, or half the framerate.
+    const { scene } = setup();
+    const names = ['sky', 'terrain', 'army:orc', 'army:nexus', 'bursts', 'key-light'];
+    for (const name of names) {
+      const found = scene.scene.children.filter((child) => child.name === name);
+      expect({ name, count: found.length }).toEqual({ name, count: 1 });
+    }
+  });
+
+  it('lets go of everything it allocated', () => {
+    const { scene, field } = setup();
+    field.applyPulse(pulse(150, 150));
+    drive(scene, field, 2);
+    expect(() => scene.dispose()).not.toThrow();
+  });
+
+  it('survives a frame that took no time', () => {
+    const { scene, field } = setup();
+    field.applyPulse(pulse(150, 150));
+    drive(scene, field, 1);
+    const before = scene.camera.position.clone();
+
+    scene.update(field, 0);
+
+    expect(scene.camera.position.distanceTo(before)).toBeLessThan(0.001);
+    expect(Number.isFinite(scene.camera.position.y)).toBe(true);
+  });
+});
+
 describe('bursts', () => {
   it('marks a death where the unit fell', () => {
     const { scene, field } = setup();

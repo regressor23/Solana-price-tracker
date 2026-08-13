@@ -102,6 +102,33 @@ describe('orbit', () => {
   });
 });
 
+describe('time', () => {
+  it('moves the orbit and nothing else', () => {
+    // The two working shots have to be reproducible from the field alone: a
+    // screenshot of the same battle taken twice must be the same screenshot,
+    // and a camera that drifts on a clock makes every comparison a guess.
+    for (const preset of ['tactical', 'front'] as const) {
+      const early = shotFor(preset, 0.4, 1.78, 0);
+      const late = shotFor(preset, 0.4, 1.78, 900);
+      expect(late).toEqual(early);
+    }
+
+    expect(shotFor('orbit', 0.4, 1.78, 900)).not.toEqual(
+      shotFor('orbit', 0.4, 1.78, 0),
+    );
+  });
+
+  it('stays on the near side of the field however long it runs', () => {
+    // The orbit is an ellipse rather than a circle for one reason: a circle of
+    // any useful radius takes the eye past a base, and from behind one the shot
+    // is the battle seen through a palisade.
+    for (let time = 0; time < 400; time += 3) {
+      const { position } = shotFor('orbit', 0.5, 1.78, time);
+      expect(Math.abs(position.z)).toBeLessThan(FIELD.depth / 2 + 10);
+    }
+  });
+});
+
 describe('narrow viewports', () => {
   it('pull back, because the field is wider than a phone', () => {
     expect(dollyForAspect(9 / 16)).toBeGreaterThan(dollyForAspect(4 / 3));

@@ -24,6 +24,15 @@ const MAX_STEP_MS = 100;
 export interface BattleStageOptions {
   /** Forced in tests, and by a browser that cannot run the 3D path. */
   webgl?: boolean;
+  /**
+   * Substituted in tests, in the same spirit as `BattleField`'s seeded random.
+   *
+   * The loop is the one part of the client that cannot be checked by looking:
+   * it only runs where there is an animation frame, and the states worth
+   * checking — a repeated pulse, a tab returning after a minute away, a context
+   * lost mid-session — are the ones a browser will not produce on request.
+   */
+  createRenderer?: (host: HTMLElement, onContextLost: () => void) => FieldRenderer;
 }
 
 export class BattleStage {
@@ -39,10 +48,13 @@ export class BattleStage {
   #frameMs = 1_000 / 60;
   #preset: CameraPreset = 'tactical';
 
+  readonly #create: BattleStageOptions['createRenderer'];
+
   constructor(host: HTMLElement, store: MarketStore, options: BattleStageOptions = {}) {
     this.#host = host;
     this.#store = store;
     this.#field = new BattleField();
+    this.#create = options.createRenderer;
     this.#renderer = this.#build(options.webgl ?? hasWebGL());
   }
 
@@ -123,6 +135,7 @@ export class BattleStage {
   };
 
   #build(webgl: boolean): FieldRenderer {
+    if (this.#create) return this.#create(this.#host, this.#onContextLost);
     if (!webgl) return new Canvas2DRenderer(this.#host);
     try {
       return new WebGLFieldRenderer(this.#host, { onContextLost: this.#onContextLost });

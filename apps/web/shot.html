@@ -72,8 +72,12 @@
         scene.update(field, 1 / 60);
       };
 
+      // How long the battle has been running when the frame is taken. Matters
+      // for the orbit, which is the one shot that moves on a clock.
+      const seconds = number('seconds', 6);
+
       field.applyPulse({ orcAlive: orc, nexusAlive: nexus, frontLine: front });
-      for (let i = 0; i < 60 * 6; i++) step();
+      for (let i = 0; i < 60 * seconds; i++) step();
       // A round of casualties, so the death effect is in the frame rather than
       // in the half second either side of it.
       field.applyPulse({ orcAlive: orc - 25, nexusAlive: nexus, frontLine: front });

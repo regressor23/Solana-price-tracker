@@ -155,12 +155,22 @@ export class BattleField {
    * gap is only worth animating through if the client was actually watching.
    */
   applyPulse(pulse: Omit<Pulse, 'type' | 't'>, elapsedSinceDraw = 0): void {
-    this.#target = { orc: pulse.orcAlive, nexus: pulse.nexusAlive };
-    this.#targetFrontLine = pulse.frontLine;
+    // Clamped, for the same reason `encodePulse` clamps rather than throws: a
+    // frame is 100 ms of display and never worth failing over. The numbers the
+    // wire can carry exceed the ones the picture can hold — a u16 count reaches
+    // 65535 against a pool of 250, and a corrupted `frontLine` decodes as far
+    // as ±3.27 — and unclamped, the first would grow the unit array forever at
+    // the reinforcement rate while the second would march both armies clean off
+    // the field. Neither is reachable from a healthy server, which is exactly
+    // why neither would be noticed.
+    const orc = clamp(pulse.orcAlive, 0, BALANCE.poolPerSide);
+    const nexus = clamp(pulse.nexusAlive, 0, BALANCE.poolPerSide);
+
+    this.#target = { orc, nexus };
+    this.#targetFrontLine = clamp(pulse.frontLine, -1, 1);
 
     const gap =
-      Math.abs(pulse.orcAlive - this.countOf('orc')) +
-      Math.abs(pulse.nexusAlive - this.countOf('nexus'));
+      Math.abs(orc - this.countOf('orc')) + Math.abs(nexus - this.countOf('nexus'));
 
     if (
       !this.#sawFirstPulse ||
@@ -174,11 +184,13 @@ export class BattleField {
 
   /** Advance the picture by `dtMs`. */
   advance(dtMs: number): void {
+    // Events describe this step and no other, so a renderer that draws every
+    // frame plays each one exactly once. Cleared before the guard below, not
+    // after it: a step of zero is still a step, and leaving the previous one's
+    // deaths in place would have the next draw play them a second time.
+    this.#events = [];
     if (!(dtMs > 0)) return;
     const dt = dtMs / 1_000;
-    // Events describe this step and no other, so a renderer that draws every
-    // frame plays each one exactly once.
-    this.#events = [];
 
     // The front line eases rather than snapping: pulses are 100 ms apart and
     // frames are 16, so six frames of every ten would otherwise be still.
@@ -313,3 +325,7 @@ export class BattleField {
 }
 
 const clamp01 = (value: number): number => (value < 0 ? 0 : value > 1 ? 1 : value);
+
+/** `NaN` falls through to `min`, which is the only reading of it that is safe here. */
+const clamp = (value: number, min: number, max: number): number =>
+  value > max ? max : value > min ? value : min;

@@ -1,7 +1,8 @@
+// @vitest-environment happy-dom
 import type { Pulse } from '@sol-warzone/protocol';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { drawField } from './canvas.js';
+import { Canvas2DRenderer, drawField } from './canvas.js';
 import { BattleField } from './field.js';
 import type { Palette } from './palette.js';
 
@@ -11,6 +12,9 @@ import type { Palette } from './palette.js';
  * Looking at the page proved this cannot be verified by eye on demand: a
  * hidden tab gets no animation frames at all, so an empty canvas there says
  * nothing about whether the drawing is right. A recording context does.
+ *
+ * This is also the fallback now, which raises the stakes: it runs on the
+ * machines least able to report what went wrong.
  */
 
 interface Call {
@@ -27,6 +31,7 @@ function recorder(): { ctx: CanvasRenderingContext2D; calls: Call[] } {
       void calls.push({ op, args });
 
   const ctx = {
+    setTransform: record('setTransform'),
     clearRect: record('clearRect'),
     fillRect: record('fillRect'),
     beginPath: record('beginPath'),
@@ -146,5 +151,88 @@ describe('drawField', () => {
       expect(arc.args[1] as number).toBeGreaterThanOrEqual(0);
       expect(arc.args[1] as number).toBeLessThanOrEqual(H);
     }
+  });
+});
+
+describe('Canvas2DRenderer', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Stub the context so a canvas can be built where there is no rasteriser. */
+  function mounted(dpr = 1): {
+    host: HTMLElement;
+    renderer: Canvas2DRenderer;
+    calls: Call[];
+  } {
+    const { ctx, calls } = recorder();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((
+      kind: string,
+    ) => (kind === '2d' ? ctx : null)) as HTMLCanvasElement['getContext']);
+    Object.defineProperty(window, 'devicePixelRatio', {
+      value: dpr,
+      configurable: true,
+    });
+
+    const host = document.createElement('section');
+    document.body.append(host);
+    return { host, renderer: new Canvas2DRenderer(host), calls };
+  }
+
+  it('brings its own canvas', () => {
+    // It has to: a canvas remembers the first context type it was asked for, so
+    // a WebGL attempt cannot hand its element over to the fallback.
+    const { host, renderer } = mounted();
+
+    const canvas = host.querySelector('canvas');
+    expect(canvas).not.toBeNull();
+    expect(canvas?.className).toBe('battlefield');
+
+    renderer.dispose();
+    expect(host.querySelector('canvas')).toBeNull();
+  });
+
+  it('draws at device resolution inside a layout-sized box', () => {
+    const { host, renderer } = mounted(2);
+    renderer.resize(800, 400);
+
+    const canvas = host.querySelector('canvas')!;
+    expect([canvas.width, canvas.height]).toEqual([1600, 800]);
+  });
+
+  it('leaves the canvas alone when the size has not changed', () => {
+    // Assigning either dimension clears the canvas, and the observer that calls
+    // this can fire every frame — so a resize that reassigns unconditionally
+    // blanks every one of them.
+    const { renderer, calls } = mounted(1);
+    renderer.resize(640, 360);
+    const transforms = calls.filter((c) => c.op === 'setTransform').length;
+
+    renderer.resize(640, 360);
+    renderer.resize(640, 360);
+
+    expect(calls.filter((c) => c.op === 'setTransform')).toHaveLength(transforms);
+  });
+
+  it('draws in layout pixels, not in backing-store ones', () => {
+    // The context is scaled by the ratio, so the drawing itself works in the
+    // box the stylesheet laid out. Getting this backwards puts the whole
+    // battle in the top-left quarter of a retina canvas.
+    const { renderer, calls } = mounted(2);
+    renderer.resize(800, 400);
+
+    const field = fieldWith(pulse(20, 20, 0.5));
+    renderer.draw(field);
+
+    const ground = calls.filter((c) => c.op === 'fillRect');
+    expect(ground[0]?.args).toEqual([0, 0, 800, field.frontY * 400]);
+  });
+
+  it('draws nothing before it has been given a size', () => {
+    // The stage sizes it on start, but a draw can still arrive first if the
+    // host is laid out late. A zero-sized clear is fine; a crash is not.
+    const { renderer, calls } = mounted();
+    expect(() => renderer.draw(fieldWith(pulse(10, 10)))).not.toThrow();
+    expect(calls[0]?.args).toEqual([0, 0, 0, 0]);
   });
 });

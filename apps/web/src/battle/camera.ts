@@ -75,15 +75,20 @@ function shot(preset: CameraPreset, front: number, dolly: number, time: number):
       };
     }
     case 'orbit': {
-      // Slow enough that it reads as drift, not as a turntable: a full circle
+      // Slow enough that it reads as drift, not as a turntable: a full pass
       // takes about two minutes, which is two rounds.
+      //
+      // An ellipse rather than a circle, and centred on the field rather than
+      // on the line. A circle of any useful radius takes the eye past one of
+      // the bases, and from there the shot is a battle seen through a palisade
+      // with a fortress in the middle of the frame. Flattened in depth, the eye
+      // stays between the two ends and only ever swings across them.
       const angle = time * 0.055;
-      const radius = 64 * dolly;
       return {
         position: {
-          x: Math.sin(angle) * radius,
-          y: 34,
-          z: front + Math.cos(angle) * radius,
+          x: Math.sin(angle) * 62 * dolly,
+          y: 36,
+          z: Math.cos(angle) * 34,
         },
         target: { x: 0, y: 3, z: front },
         fov: 45,
