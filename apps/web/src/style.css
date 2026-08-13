@@ -1,25 +1,15 @@
 /*
- * Phase 0 shell. The palette is already the one from PLAN.md §6:
- * orc red on one end, nexus cyan on the other.
+ * Phase 0 shell, on the design system's tokens.
+ *
+ * Every value lives in tokens.css — this file may reference vars but must not
+ * define colours or spacing of its own. One palette in two places is how the
+ * two quietly drift apart.
+ *
+ * The font stack still falls through to system-ui: tokens.css names Inter and
+ * JetBrains Mono, but the @font-face rules and their woff2 files land with the
+ * HUD in phase 6.
  */
-
-:root {
-  --bg: #07090c;
-  --panel: #0d1116;
-  --line: #1b222b;
-  --text: #e8eef5;
-  --muted: #6c7a8a;
-
-  --orc: #c4472c;
-  --nexus: #00d4ff;
-
-  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
-}
-
-* {
-  box-sizing: border-box;
-}
+@import './tokens.css';
 
 html,
 body {
@@ -92,7 +82,7 @@ body {
 }
 
 .pair__tick[data-dir='down'] {
-  color: var(--orc);
+  color: var(--orc-text);
 }
 
 .feed-state {
@@ -135,7 +125,7 @@ body {
 
 .feed-state__value[data-status='degraded'],
 .feed-state__value[data-status='demo'] {
-  color: var(--orc);
+  color: var(--orc-text);
 }
 
 .feed-state__value[data-status='offline'] {
@@ -246,7 +236,7 @@ body.debug .stage {
 
 .dbg__value[data-tone='down'],
 .dbg__trade[data-side='sell'] {
-  color: var(--orc);
+  color: var(--orc-text);
 }
 
 .dbg__ladder {
@@ -294,9 +284,12 @@ body.debug .stage {
   background: rgba(255, 255, 255, 0.03);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-}
+/*
+ * Reduced motion is handled in tokens.css, which zeroes the duration tokens
+ * but deliberately keeps --dur-flash: a colour change is not movement, and the
+ * price tick is the one signal that must survive.
+ *
+ * The blunt `* { animation-duration: 0.01ms !important }` that used to sit here
+ * would have overridden exactly that nuance — !important wins, so the two could
+ * not coexist.
+ */
