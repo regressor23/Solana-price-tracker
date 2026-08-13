@@ -1,4 +1,8 @@
-import { PROTOCOL_VERSION, type ServerMessage } from '@sol-warzone/protocol';
+import {
+  PROTOCOL_VERSION,
+  encodePulse,
+  type ServerMessage,
+} from '@sol-warzone/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -15,6 +19,7 @@ class FakeSocket {
 
   readonly listeners = new Map<string, ((event: unknown) => void)[]>();
   closeCalls = 0;
+  binaryType = 'blob';
 
   constructor(readonly url: string) {
     FakeSocket.instances.push(this);
@@ -119,13 +124,30 @@ describe('messages', () => {
     expect(messages).toHaveLength(0);
   });
 
-  it('ignores non-string frames', () => {
-    // Binary framing arrives in phase 2; until then a binary frame is a bug,
-    // not something to hand to JSON.parse.
+  it('decodes a binary pulse', () => {
+    // The wire is mixed on purpose: binary for the 10 Hz pulse, JSON for
+    // everything else. Both have to come out of the same handler.
+    const { connection, messages } = harness();
+    connection.open();
+    latest().emit('message', {
+      data: encodePulse({ orcAlive: 203, nexusAlive: 138, frontLine: -0.327 }),
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'pulse', orcAlive: 203 });
+  });
+
+  it('ignores a binary frame that is not a pulse', () => {
     const { connection, messages } = harness();
     connection.open();
     latest().emit('message', { data: new ArrayBuffer(8) });
     expect(messages).toHaveLength(0);
+  });
+
+  it('asks for array buffers, because a Blob would only read a frame late', () => {
+    const { connection } = harness();
+    connection.open();
+    expect(latest().binaryType).toBe('arraybuffer');
   });
 
   it('stops for good on a protocol mismatch', () => {

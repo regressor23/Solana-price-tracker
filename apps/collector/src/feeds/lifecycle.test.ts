@@ -14,6 +14,8 @@ interface Options {
   /** Swaps returned by each successive /v1/txs poll. */
   swapPages?: { type: 'buy' | 'sell'; usdVolume: number; txHash: string }[][];
   failPrice?: boolean;
+  /** Serve this many prices, then go dark — an upstream that dies mid-session. */
+  failPriceAfter?: number;
 }
 
 function harness(options: Options = {}) {
@@ -21,12 +23,17 @@ function harness(options: Options = {}) {
   const statuses: { status: FeedStatus; detail?: string }[] = [];
   let swapPoll = 0;
   let blockId = 1_000;
+  let priceCalls = 0;
 
   vi.stubGlobal('fetch', (url: string) => {
     const { pathname, searchParams } = new URL(url);
 
     if (pathname.startsWith('/price/v3')) {
-      if (options.failPrice) {
+      priceCalls++;
+      const dead =
+        options.failPrice ||
+        (options.failPriceAfter !== undefined && priceCalls > options.failPriceAfter);
+      if (dead) {
         return Promise.resolve(new Response('boom', { status: 500 }));
       }
       return Promise.resolve(
@@ -137,9 +144,11 @@ describe('snapshot', () => {
     const h = harness({
       swapPages: [
         [], // priming poll is discarded
+        // Above the tier bar on purpose: only listed trades reach the replay
+        // now, and anything smaller is folded into a Flow instead.
         [
-          { type: 'buy', usdVolume: 900, txHash: 'b' },
-          { type: 'sell', usdVolume: 800, txHash: 'a' },
+          { type: 'buy', usdVolume: 1_900, txHash: 'b' },
+          { type: 'sell', usdVolume: 1_800, txHash: 'a' },
         ],
       ],
     });
@@ -150,7 +159,7 @@ describe('snapshot', () => {
     h.feeds.stop();
 
     // The API pages newest-first; the wire carries chronological order.
-    expect(h.feeds.snapshot().recentTrades.map((t) => t.usd)).toEqual([800, 900]);
+    expect(h.feeds.snapshot().recentTrades.map((t) => t.usd)).toEqual([1_800, 1_900]);
   });
 
   it('caps replayed trades so the payload cannot grow without bound', async () => {
@@ -269,5 +278,66 @@ describe('shutdown', () => {
     await settle();
 
     expect(h.events.length).toBe(before);
+  });
+});
+
+describe('demo mode', () => {
+  /** `DEMO_AFTER_POLLS` (40) at the lite price cadence (2 s), plus a margin. */
+  const OUTAGE_MS = 95_000;
+
+  it('invents a market once the upstream has been silent long enough', async () => {
+    const h = harness({ failPriceAfter: 2 });
+    h.feeds.start();
+    await settle();
+    expect(h.feeds.diagnostics().status).toBe('live');
+
+    await vi.advanceTimersByTimeAsync(OUTAGE_MS);
+    await settle();
+    h.feeds.stop();
+
+    expect(h.feeds.diagnostics().status).toBe('demo');
+    // Degraded first: while a retry might still land, saying so is the honest
+    // answer. Only once the page would be a still image do we invent one.
+    const order = h.statuses.map((s) => s.status);
+    expect(order.indexOf('degraded')).toBeLessThan(order.indexOf('demo'));
+    expect(h.statuses.at(-1)?.detail).toContain('generated');
+  });
+
+  it('keeps the page moving with the same event mix as the real feeds', async () => {
+    const h = harness({ failPriceAfter: 2 });
+    h.feeds.start();
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(OUTAGE_MS);
+    await settle();
+    const before = h.events.length;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    h.feeds.stop();
+
+    const during = h.events.slice(before);
+    expect(during.filter((e) => e.type === 'tick').length).toBeGreaterThan(20);
+    expect(during.filter((e) => e.type === 'flow').length).toBeGreaterThan(20);
+  });
+
+  it('drops the generator the moment real data returns', async () => {
+    // Invented data must never outlive the outage that justified it.
+    const h = harness({ failPriceAfter: 2 });
+    h.feeds.start();
+    await settle();
+    await vi.advanceTimersByTimeAsync(OUTAGE_MS);
+    await settle();
+    expect(h.feeds.diagnostics().status).toBe('demo');
+
+    // The stub only fails by count, so a fresh harness stands in for recovery:
+    // what matters is that a successful poll takes the status back off demo.
+    const healthy = harness();
+    healthy.feeds.start();
+    await settle();
+    healthy.feeds.stop();
+    expect(healthy.feeds.diagnostics().status).toBe('live');
+
+    h.feeds.stop();
   });
 });

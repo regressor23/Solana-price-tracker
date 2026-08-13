@@ -112,7 +112,59 @@ export interface RoundEnd {
   readonly nexusFallen: number;
 }
 
-export type MarketEvent = PriceTick | Trade | DepthSnapshot | RoundEnd;
+/**
+ * Aggregate of the trades that were *not* sent individually.
+ *
+ * Measured on production: the raw stream runs ~4.5 trades/s with a median of
+ * $755, and 88.6% of all socket traffic was those trades. The client only ever
+ * lists `heavy` and above, so shipping the rest one by one paid for bandwidth
+ * nobody spent. They arrive here as a sum instead.
+ *
+ * The simulation loses nothing: at `poolPerSide: 250` and `usdPerTroop: 900`,
+ * one $755 trade is indistinguishable from two of $377.
+ *
+ * **`Flow` and `Trade` describe disjoint sets.** A trade is either summed here
+ * or delivered as its own `Trade`, never both, so a client wanting the true
+ * total simply adds them. Overlapping the two would make double-counting the
+ * default mistake.
+ */
+export interface Flow {
+  readonly type: 'flow';
+  readonly t: number;
+  /** Normal-tier buy volume since the previous `Flow`, USD. */
+  readonly buyUsd: number;
+  readonly sellUsd: number;
+  /** How many trades were folded into this sum. */
+  readonly trades: number;
+}
+
+/**
+ * Authoritative battle state, broadcast at `PULSE_HZ` as a binary frame.
+ *
+ * The server owns the score (PLAN.md §7): flow, casualties, front line and the
+ * round verdict are identical for every viewer, while the client owns only the
+ * spectacle — where units stand and how they swing.
+ *
+ * Carried as binary because at 10 Hz JSON costs more than the raw trade stream
+ * it replaces: a 132-byte frame ten times a second is 1393 B/s against the 597
+ * B/s measured today, whereas `PULSE_BYTES` of binary is 223 B/s. This is the
+ * one frame where a hand-rolled codec earns its keep, so it is the only one
+ * that gets it — everything else stays JSON and stays readable.
+ *
+ * `t` is not on the wire. The client stamps arrival instead, which costs
+ * nothing and saves 13 digits per frame.
+ */
+export interface Pulse {
+  readonly type: 'pulse';
+  readonly t: number;
+  /** Living orc units, 0…`BALANCE.poolPerSide`. */
+  readonly orcAlive: number;
+  readonly nexusAlive: number;
+  /** Front line position, −1 (orcs winning) … +1 (nexus winning). */
+  readonly frontLine: number;
+}
+
+export type MarketEvent = PriceTick | Trade | DepthSnapshot | RoundEnd | Flow | Pulse;
 
 // ---------------------------------------------------------------------------
 // Connection lifecycle
@@ -247,6 +299,12 @@ export type FeedProfile = keyof typeof FEED_PROFILES;
 /** Server -> client broadcast rate. */
 export const BROADCAST_HZ = 10;
 
+/** `Pulse` rate. Full broadcast rate, so the front line moves without the client easing it. */
+export const PULSE_HZ = 10;
+
+/** `Flow` rate. The trades poller runs at 1 Hz, so nothing new exists more often. */
+export const FLOW_HZ = 1;
+
 // ---------------------------------------------------------------------------
 // Battle balance
 //
@@ -274,20 +332,84 @@ export const BALANCE = {
   relWhaleFloor: 3_750, // 125 * 30
   relWhaleMult: 30,
 
-  /** USD of flow that removes one enemy unit. */
-  usdPerTroop: 900,
-  /** USD of resting liquidity that queues one reinforcement. */
-  usdPerReinforce: 400,
+  /**
+   * Casualties per minute the battle aims for, across both sides.
+   *
+   * This is the spectacle dial, and the only number here chosen by taste. With
+   * 250 a side, 120 a minute turns over about a quarter of the field each
+   * round — attrition you can watch without a wipe. `usdPerTroop` follows from
+   * it and from live volume; see `usdPerTroop()`.
+   */
+  targetCasualtiesPerMin: 120,
+
+  /**
+   * Stand-in until candles arrive, and the floor if volume collapses.
+   *
+   * Measured 2026-08-13: SOL ran $104k/min, which at the target above gives
+   * ~$870. The reference implementation guessed 900 for BTC and we inherited
+   * it; the agreement is a coincidence worth noting and not worth trusting.
+   */
+  fallbackUsdPerTroop: 870,
+
+  /**
+   * Division guard, not a target. It binds only below about $7k/min — a market
+   * that has genuinely stopped — where the derived figure would approach zero
+   * and make dust lethal. Anywhere above that the derivation must be free to
+   * move, including downward: a quieter market should still get its 120
+   * casualties, otherwise the battle dies with the volume.
+   */
+  minUsdPerTroop: 60,
+
+  /** No single trade may erase more than this, however large the whale. */
+  maxUnitsPerTrade: 60,
 
   poolPerSide: 250,
   baseTroops: 200,
   minTroops: 40,
-  maxUnitsPerTrade: 60,
+
+  /**
+   * Reinforcement is a restoring force, not an accumulator: each side is
+   * pulled toward a target set by its share of resting liquidity. That is what
+   * keeps the model from pinning — the further a side falls behind its target,
+   * the faster it recovers, so zero is unreachable and the ceiling cannot
+   * stick either.
+   */
+  reinforceHalfLifeSec: 25,
+
+  /**
+   * Wall shares arrive once every 60 s on the lite profile, so the target
+   * would otherwise step once a minute and reinforcement would visibly change
+   * gear. Smoothing over longer than the poll interval spreads each step out.
+   */
+  wallShareHalfLifeSec: 90,
+
+  /** Light on purpose: enough to ease the line, not enough to hide a whale. */
+  frontLineHalfLifeSec: 2,
 
   /** Round length, seconds. */
   roundSec: 60,
-  flowScale: 60_000,
 } as const;
+
+/**
+ * USD of flow that removes one enemy unit, derived from what the market is
+ * actually doing rather than fixed.
+ *
+ * A constant tuned at one volume stops meaning anything at another: the same
+ * $900 that gives a lively battle at $104k/min would barely scratch it at ten
+ * times that, and would wipe the field at a tenth. Deriving it keeps the
+ * spectacle legible across both.
+ */
+export function usdPerTroop(volumePerMinute: number | null): number {
+  if (
+    volumePerMinute === null ||
+    !Number.isFinite(volumePerMinute) ||
+    volumePerMinute <= 0
+  ) {
+    return BALANCE.fallbackUsdPerTroop;
+  }
+  const derived = volumePerMinute / BALANCE.targetCasualtiesPerMin;
+  return Math.max(derived, BALANCE.minUsdPerTroop);
+}
 
 export type Balance = typeof BALANCE;
 
@@ -309,4 +431,71 @@ export function classifyTrade(usd: number, refUsd: number): TradeTier {
     return 'heavy';
   }
   return 'normal';
+}
+
+// ---------------------------------------------------------------------------
+// Binary frames
+//
+// Only `Pulse` is binary, and only because it runs at 10 Hz — see its doc
+// comment for the measurement. Every other message stays JSON, because a
+// readable wire is worth more than bytes nobody is short of.
+// ---------------------------------------------------------------------------
+
+/**
+ * Leading byte of every binary frame. Lets the reader dispatch on kind, and
+ * lets a future frame be added without guessing from the length.
+ */
+export const FRAME_PULSE = 1;
+
+export const PULSE_BYTES = 7;
+
+/**
+ * Fixed-point scale for `frontLine`. −1…+1 becomes −10000…+10000, which fits
+ * an int16 with room to spare and stays legible in a hex dump: 5000 is plainly
+ * half way. A raw int16 range would buy precision far below one screen pixel.
+ */
+const FRONT_LINE_SCALE = 10_000;
+
+const clamp = (value: number, min: number, max: number): number =>
+  value < min ? min : value > max ? max : value;
+
+/**
+ * Pack a pulse into `PULSE_BYTES`: kind, two u16 unit counts, one i16 front
+ * line. Big-endian, which is both the `DataView` default and network order.
+ *
+ * Out-of-range values are clamped rather than rejected. This runs inside the
+ * broadcast loop, and a simulation bug should not be able to throw there and
+ * take the socket down for every viewer — the numbers are for display, so a
+ * pinned counter is a far better failure than a dead stream.
+ */
+export function encodePulse(pulse: Omit<Pulse, 'type' | 't'>): ArrayBuffer {
+  const buffer = new ArrayBuffer(PULSE_BYTES);
+  const view = new DataView(buffer);
+  view.setUint8(0, FRAME_PULSE);
+  view.setUint16(1, clamp(Math.round(pulse.orcAlive), 0, 65_535), false);
+  view.setUint16(3, clamp(Math.round(pulse.nexusAlive), 0, 65_535), false);
+  view.setInt16(5, Math.round(clamp(pulse.frontLine, -1, 1) * FRONT_LINE_SCALE), false);
+  return buffer;
+}
+
+/**
+ * Read a pulse, or `null` if the frame is not one.
+ *
+ * Returning `null` rather than throwing mirrors how the client already treats
+ * unparseable JSON: skip the frame and wait for the next one, which is 100 ms
+ * away. A malformed frame is not worth dropping a working connection over.
+ *
+ * `now` is a seam for tests; production lets it default.
+ */
+export function decodePulse(frame: ArrayBuffer, now = Date.now()): Pulse | null {
+  if (frame.byteLength !== PULSE_BYTES) return null;
+  const view = new DataView(frame);
+  if (view.getUint8(0) !== FRAME_PULSE) return null;
+  return {
+    type: 'pulse',
+    t: now,
+    orcAlive: view.getUint16(1, false),
+    nexusAlive: view.getUint16(3, false),
+    frontLine: view.getInt16(5, false) / FRONT_LINE_SCALE,
+  };
 }

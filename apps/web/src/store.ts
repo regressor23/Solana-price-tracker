@@ -3,6 +3,7 @@ import type {
   DepthSnapshot,
   FeedStatus,
   PriceTick,
+  Pulse,
   ServerMessage,
   Trade,
 } from '@sol-warzone/protocol';
@@ -19,9 +20,20 @@ export interface MarketState {
   candles: readonly Candle[];
   /** Newest first. */
   trades: readonly Trade[];
-  counts: Record<'tick' | 'trade' | 'depth' | 'snapshot' | 'status', number>;
+  counts: Record<
+    'tick' | 'trade' | 'depth' | 'snapshot' | 'status' | 'flow' | 'pulse',
+    number
+  >;
+  /**
+   * Volume since connect, display only. Sums `Flow` and `Trade` together —
+   * they describe disjoint sets, so adding them double-counts nothing.
+   */
   buyUsd: number;
   sellUsd: number;
+  /** How many trades the sums above cover, individual and aggregated alike. */
+  tradesSeen: number;
+  /** Latest authoritative battle state. The server owns this, not us. */
+  battle: Pulse | null;
   lastMessageAt: number | null;
 }
 
@@ -33,9 +45,11 @@ const emptyState = (): MarketState => ({
   depth: null,
   candles: [],
   trades: [],
-  counts: { tick: 0, trade: 0, depth: 0, snapshot: 0, status: 0 },
+  counts: { tick: 0, trade: 0, depth: 0, snapshot: 0, status: 0, flow: 0, pulse: 0 },
   buyUsd: 0,
   sellUsd: 0,
+  tradesSeen: 0,
+  battle: null,
   lastMessageAt: null,
 });
 
@@ -101,8 +115,23 @@ export class MarketStore {
       case 'trade':
         state.trades = [message, ...state.trades].slice(0, TRADE_HISTORY);
         state.counts.trade++;
+        state.tradesSeen++;
         if (message.side === 'buy') state.buyUsd += message.usd;
         else state.sellUsd += message.usd;
+        break;
+
+      // The small trades that were never sent individually. They belong in the
+      // totals but not in the feed — the feed only ever lists heavy and above.
+      case 'flow':
+        state.buyUsd += message.buyUsd;
+        state.sellUsd += message.sellUsd;
+        state.tradesSeen += message.trades;
+        state.counts.flow++;
+        break;
+
+      case 'pulse':
+        state.battle = message;
+        state.counts.pulse++;
         break;
 
       case 'round':

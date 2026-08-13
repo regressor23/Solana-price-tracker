@@ -12,6 +12,14 @@ interface Swap {
   poolId?: string;
 }
 
+/**
+ * Sizes either side of the tier bar, which sits at $1,000 while the reference
+ * rests on its floor. Only listed tiers arrive as their own event now, so a
+ * test about individual trades has to use a size that stays one.
+ */
+const HEAVY = 2_000;
+const SMALL = 200;
+
 const swap = (
   txHash: string,
   type: 'buy' | 'sell',
@@ -36,12 +44,14 @@ function feedOf(pages: Swap[][]): TradeFeed {
   return new TradeFeed({ http, dataUrl: 'https://x', now: () => 5_000 });
 }
 
+const empty = { trades: [], flow: null };
+
 describe('priming', () => {
   it('emits nothing on the first poll', async () => {
     // The opening page is history. Replaying it would kill thirty units for
     // trades that happened before anyone was watching.
     const feed = feedOf([[swap('a', 'buy', 1_000), swap('b', 'sell', 2_000)]]);
-    expect(await feed.poll()).toEqual([]);
+    expect(await feed.poll()).toEqual(empty);
   });
 
   it('still learns the size reference while priming', async () => {
@@ -52,24 +62,72 @@ describe('priming', () => {
   });
 });
 
+describe('aggregation', () => {
+  it('sums the small trades instead of listing them', async () => {
+    const feed = feedOf([
+      [],
+      [swap('a', 'buy', SMALL), swap('b', 'sell', 300), swap('c', 'buy', 100)],
+    ]);
+    await feed.poll();
+    const { trades, flow } = await feed.poll();
+
+    expect(trades).toEqual([]);
+    expect(flow).toEqual({
+      type: 'flow',
+      t: 5_000,
+      buyUsd: 300,
+      sellUsd: 300,
+      trades: 3,
+    });
+  });
+
+  it('splits a mixed batch, never counting a trade twice', async () => {
+    // Flow and the individual trades describe disjoint sets. A client wanting
+    // the true total adds them, so an overlap here would inflate every figure
+    // downstream.
+    const feed = feedOf([[], [swap('big', 'buy', HEAVY), swap('small', 'buy', SMALL)]]);
+    await feed.poll();
+    const { trades, flow } = await feed.poll();
+
+    expect(trades).toHaveLength(1);
+    expect(trades[0]).toMatchObject({ usd: HEAVY, tier: 'heavy' });
+    expect(flow).toMatchObject({ buyUsd: SMALL, trades: 1 });
+  });
+
+  it('sends no frame at all on a quiet second', async () => {
+    // A zeroed Flow ten times a minute would be pure overhead.
+    const feed = feedOf([[], []]);
+    await feed.poll();
+    expect((await feed.poll()).flow).toBeNull();
+  });
+
+  it('keeps a batch of only large trades out of the aggregate', async () => {
+    const feed = feedOf([[], [swap('a', 'buy', HEAVY), swap('b', 'sell', HEAVY)]]);
+    await feed.poll();
+    const { trades, flow } = await feed.poll();
+    expect(trades).toHaveLength(2);
+    expect(flow).toBeNull();
+  });
+});
+
 describe('deduplication', () => {
   it('emits only swaps not seen before', async () => {
     const feed = feedOf([
-      [swap('a', 'buy', 100)],
-      [swap('b', 'sell', 200), swap('a', 'buy', 100)],
+      [swap('a', 'buy', HEAVY)],
+      [swap('b', 'sell', HEAVY), swap('a', 'buy', HEAVY)],
     ]);
     await feed.poll();
-    const second = await feed.poll();
-    expect(second).toHaveLength(1);
-    expect(second[0]).toMatchObject({ side: 'sell', usd: 200 });
+    const { trades } = await feed.poll();
+    expect(trades).toHaveLength(1);
+    expect(trades[0]).toMatchObject({ side: 'sell', usd: HEAVY });
   });
 
   it('never re-emits across many polls of an unchanging page', async () => {
-    const page = [swap('a', 'buy', 100), swap('b', 'sell', 200)];
+    const page = [swap('a', 'buy', HEAVY), swap('b', 'sell', SMALL)];
     const feed = feedOf([page, page, page, page]);
     await feed.poll();
-    expect(await feed.poll()).toEqual([]);
-    expect(await feed.poll()).toEqual([]);
+    expect(await feed.poll()).toEqual(empty);
+    expect(await feed.poll()).toEqual(empty);
   });
 });
 
@@ -80,14 +138,14 @@ describe('ordering', () => {
     const feed = feedOf([
       [],
       [
-        swap('newest', 'buy', 300, '2026-08-10T19:46:03.000Z'),
-        swap('middle', 'buy', 200, '2026-08-10T19:46:02.000Z'),
-        swap('oldest', 'buy', 100, '2026-08-10T19:46:01.000Z'),
+        swap('newest', 'buy', 3_000, '2026-08-10T19:46:03.000Z'),
+        swap('middle', 'buy', 2_000, '2026-08-10T19:46:02.000Z'),
+        swap('oldest', 'buy', 1_000, '2026-08-10T19:46:01.000Z'),
       ],
     ]);
     await feed.poll();
-    const trades = await feed.poll();
-    expect(trades.map((t) => t.usd)).toEqual([100, 200, 300]);
+    const { trades } = await feed.poll();
+    expect(trades.map((t) => t.usd)).toEqual([1_000, 2_000, 3_000]);
   });
 });
 
@@ -98,18 +156,21 @@ describe('classification', () => {
     const ordinary = Array.from({ length: 40 }, (_, i) => swap(`o${i}`, 'buy', 1_000));
     const feed = feedOf([ordinary, [swap('whale', 'buy', 500_000)]]);
     await feed.poll();
-    const [whale] = await feed.poll();
-    expect(whale?.tier).toBe('whale');
+    const { trades } = await feed.poll();
+    expect(trades[0]?.tier).toBe('whale');
   });
 
-  it('leaves an average trade normal', async () => {
+  it('folds an average trade into the aggregate rather than listing it', async () => {
     const feed = feedOf([
       Array.from({ length: 40 }, (_, i) => swap(`o${i}`, 'buy', 5_000)),
       [swap('next', 'buy', 5_200)],
     ]);
     await feed.poll();
-    const [trade] = await feed.poll();
-    expect(trade?.tier).toBe('normal');
+    const { trades, flow } = await feed.poll();
+
+    // A busy market raises the bar: $5,200 is ordinary here, so it is summed.
+    expect(trades).toEqual([]);
+    expect(flow).toMatchObject({ buyUsd: 5_200, trades: 1 });
   });
 });
 
@@ -117,8 +178,8 @@ describe('field mapping', () => {
   it('carries side, size, price and timestamp through', async () => {
     const feed = feedOf([[], [swap('x', 'sell', 1_234.5)]]);
     await feed.poll();
-    const [trade] = await feed.poll();
-    expect(trade).toMatchObject({
+    const { trades } = await feed.poll();
+    expect(trades[0]).toMatchObject({
       type: 'trade',
       side: 'sell',
       usd: 1_234.5,
@@ -128,10 +189,10 @@ describe('field mapping', () => {
   });
 
   it('falls back to receive time when the timestamp is unparseable', async () => {
-    const feed = feedOf([[], [swap('x', 'buy', 10, 'not-a-date')]]);
+    const feed = feedOf([[], [swap('x', 'buy', HEAVY, 'not-a-date')]]);
     await feed.poll();
-    const [trade] = await feed.poll();
-    expect(trade?.t).toBe(5_000);
+    const { trades } = await feed.poll();
+    expect(trades[0]?.t).toBe(5_000);
   });
 
   it('requests the dust filter and the page size', async () => {
@@ -165,12 +226,12 @@ describe('resilience', () => {
         )) as unknown as typeof globalThis.fetch,
     });
     const feed = new TradeFeed({ http, dataUrl: 'https://x' });
-    await expect(feed.poll()).resolves.toEqual([]);
+    await expect(feed.poll()).resolves.toEqual(empty);
   });
 
   it('ignores entries with no hash instead of emitting them repeatedly', async () => {
-    const feed = feedOf([[], [{ ...swap('', 'buy', 100), txHash: '' }]]);
+    const feed = feedOf([[], [{ ...swap('', 'buy', HEAVY), txHash: '' }]]);
     await feed.poll();
-    expect(await feed.poll()).toEqual([]);
+    expect(await feed.poll()).toEqual(empty);
   });
 });

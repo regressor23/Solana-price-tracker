@@ -130,13 +130,34 @@ export function renderDebug(
       ['buy volume', usdCompact(s.buyUsd), 'up'],
       ['sell volume', usdCompact(s.sellUsd), 'down'],
       ['net', usdCompact(store.netUsd), toneFor(store.netUsd)],
-      ['trades', String(s.counts.trade)],
+      ['trades seen', String(s.tradesSeen)],
+      ['— listed', String(s.counts.trade)],
+      ['— aggregated', String(s.counts.flow)],
       ['ticks', String(s.counts.tick)],
       ['depth snapshots', String(s.counts.depth)],
       ['last message', age(s.lastMessageAt, now)],
     ]),
   );
   grid.append(flow);
+
+  // ---- battle ------------------------------------------------------------
+  // Server-authored (PLAN.md §7). If these disagree with the flow above, the
+  // scoring is wrong, not the feed.
+  const battle = section('BATTLE (server-authored)');
+  battle.append(
+    rows(
+      s.battle
+        ? [
+            ['orcs alive', num(s.battle.orcAlive), 'down'],
+            ['nexus alive', num(s.battle.nexusAlive), 'up'],
+            ['front line', pct(s.battle.frontLine, 1), toneFor(s.battle.frontLine)],
+            ['pulses', String(s.counts.pulse)],
+            ['age', age(s.battle.t, now)],
+          ]
+        : [['orcs alive', 'waiting…']],
+    ),
+  );
+  grid.append(battle);
 
   // ---- candles -----------------------------------------------------------
   const candles = section('CANDLES (1m)');

@@ -149,3 +149,48 @@ describe('counters', () => {
     expect(store.state.price?.price).toBe(76);
   });
 });
+
+describe('flow and pulse', () => {
+  it('adds aggregated volume to the same totals as individual trades', () => {
+    // Flow and Trade cover disjoint sets, so the totals are a plain sum. If
+    // they ever overlapped, this is where the double-count would show.
+    const store = new MarketStore();
+    store.apply(trade('buy', 6_100));
+    store.apply({ type: 'flow', t: 2, buyUsd: 900, sellUsd: 4_000, trades: 7 });
+
+    expect(store.state.buyUsd).toBe(7_000);
+    expect(store.state.sellUsd).toBe(4_000);
+    expect(store.netUsd).toBe(3_000);
+  });
+
+  it('counts aggregated trades without putting them in the feed', () => {
+    const store = new MarketStore();
+    store.apply(trade('sell', 23_000));
+    store.apply({ type: 'flow', t: 2, buyUsd: 0, sellUsd: 500, trades: 12 });
+
+    expect(store.state.tradesSeen).toBe(13);
+    // The feed lists heavy and above only — the twelve small ones never appear.
+    expect(store.state.trades).toHaveLength(1);
+  });
+
+  it('keeps only the latest battle state, since the server is authoritative', () => {
+    const store = new MarketStore();
+    store.apply({
+      type: 'pulse',
+      t: 1,
+      orcAlive: 203,
+      nexusAlive: 138,
+      frontLine: -0.3,
+    });
+    store.apply({
+      type: 'pulse',
+      t: 2,
+      orcAlive: 199,
+      nexusAlive: 141,
+      frontLine: -0.2,
+    });
+
+    expect(store.state.battle).toMatchObject({ orcAlive: 199, frontLine: -0.2 });
+    expect(store.state.counts.pulse).toBe(2);
+  });
+});

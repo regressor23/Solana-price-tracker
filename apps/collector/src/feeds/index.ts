@@ -13,6 +13,7 @@ import {
 import { HttpClient, HttpError } from '../http.js';
 import { Poller } from '../poller.js';
 import { CandleFeed } from './candles.js';
+import { DemoFeed } from './demo.js';
 import { DepthFeed } from './depth.js';
 import { PriceFeed } from './price.js';
 import { TradeFeed } from './trades.js';
@@ -40,6 +41,15 @@ export interface MarketFeedsOptions {
  * the other.
  */
 const STALE_AFTER_POLLS = 8;
+
+/**
+ * Poll intervals of silence before the collector invents a market.
+ *
+ * Well past `STALE_AFTER_POLLS`, because `degraded` is the honest answer while
+ * there is still hope of a retry landing: on the lite profile this is 2 s × 40,
+ * so a real outage has had eighty seconds to resolve itself first.
+ */
+const DEMO_AFTER_POLLS = 40;
 /** Trades are bursty; absence is normal, so this is generous. */
 const RECENT_TRADES = 50;
 /**
@@ -112,6 +122,9 @@ export class MarketFeeds {
   #downgradeReason: string | null = null;
   #started = false;
   #supervisor: ReturnType<typeof setInterval> | undefined;
+  #demoTimer: ReturnType<typeof setInterval> | undefined;
+  /** Built on the first demo tick, discarded the moment real data returns. */
+  #demo: DemoFeed | undefined;
 
   #recentTrades: Trade[] = [];
   #status: FeedStatus = 'sync';
@@ -139,10 +152,15 @@ export class MarketFeeds {
         intervalMs: FEED_PROFILES.lite.trades,
         onError: this.#onError,
         tick: async () => {
-          for (const trade of await this.#trades.poll()) {
+          const { trades, flow } = await this.#trades.poll();
+          // Only listed tiers reach `recentTrades`, so the snapshot a new
+          // visitor gets is 50 events the feed will actually show — tens of
+          // minutes of history, where 50 raw trades were eleven seconds of it.
+          for (const trade of trades) {
             this.#publish(trade);
             this.#recentTrades.push(trade);
           }
+          if (flow) this.#publish(flow);
           if (this.#recentTrades.length > RECENT_TRADES) {
             this.#recentTrades = this.#recentTrades.slice(-RECENT_TRADES);
           }
@@ -176,6 +194,10 @@ export class MarketFeeds {
       this.#checkKeyIsEarningItsPlace();
     }, SUPERVISOR_MS);
     this.#supervisor.unref?.();
+
+    // Idle unless the upstream goes silent; see #refreshStatus.
+    this.#demoTimer = setInterval(() => this.#runDemo(), 1_000);
+    this.#demoTimer.unref?.();
   }
 
   stop(): void {
@@ -185,6 +207,24 @@ export class MarketFeeds {
     }
     if (this.#supervisor !== undefined) clearInterval(this.#supervisor);
     this.#supervisor = undefined;
+    if (this.#demoTimer !== undefined) clearInterval(this.#demoTimer);
+    this.#demoTimer = undefined;
+  }
+
+  /**
+   * Publish a second of invented market while the upstream is silent.
+   *
+   * The generator is created on the first demo tick rather than at boot, so it
+   * can start from the last price the market really had — a visitor who was
+   * already watching sees the number carry on rather than jump.
+   */
+  #runDemo(): void {
+    if (this.#status !== 'demo') return;
+    this.#demo ??= new DemoFeed({
+      now: this.#now,
+      ...(this.#price.last ? { startPrice: this.#price.last.price } : {}),
+    });
+    for (const event of this.#demo.poll()) this.#publish(event);
   }
 
   /** Warm-start payload for a client that just connected. */
@@ -345,14 +385,24 @@ export class MarketFeeds {
     let next: FeedStatus;
     let detail: string | undefined;
 
+    const priceInterval = FEED_PROFILES[this.#profile].price;
+
     if (lastOk === 0) {
       next = 'sync';
-    } else if (age > FEED_PROFILES[this.#profile].price * STALE_AFTER_POLLS) {
+    } else if (age > priceInterval * DEMO_AFTER_POLLS) {
+      // Past this the page would be a still image, and a visitor could not tell
+      // an outage from a broken site. Invented data that says so beats that.
+      next = 'demo';
+      detail = `upstream silent ${Math.round(age / 1000)}s — showing generated data`;
+    } else if (age > priceInterval * STALE_AFTER_POLLS) {
       next = 'degraded';
       detail = `price ${Math.round(age / 1000)}s stale`;
     } else {
       next = 'live';
     }
+
+    // Real data outranks invented data the moment any arrives.
+    if (next !== 'demo' && this.#demo) this.#demo = undefined;
 
     if (next === this.#status) return;
     this.#status = next;

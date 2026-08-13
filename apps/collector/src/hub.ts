@@ -4,6 +4,7 @@ import {
   BROADCAST_HZ,
   PAIR_LABEL,
   PROTOCOL_VERSION,
+  encodePulse,
   type FeedStatus,
   type ServerMessage,
 } from '@sol-warzone/protocol';
@@ -106,8 +107,12 @@ export class Hub {
     const batch = this.#queue;
     this.#queue = [];
 
-    // One encode for all clients. Binary framing lands in phase 2.
-    const frames = batch.map((message) => JSON.stringify(message));
+    // One encode for all clients, whatever the framing. The pulse goes out as
+    // bytes because it runs at 10 Hz and JSON there costs more than the whole
+    // trade stream it replaced; everything else stays readable.
+    const frames = batch.map((message) =>
+      message.type === 'pulse' ? encodePulse(message) : JSON.stringify(message),
+    );
     for (const socket of this.#wss.clients) {
       if (socket.readyState !== socket.OPEN) continue;
       for (const frame of frames) socket.send(frame);

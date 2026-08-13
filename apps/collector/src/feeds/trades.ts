@@ -1,4 +1,11 @@
-import { BALANCE, SOL_MINT, classifyTrade, type Trade } from '@sol-warzone/protocol';
+import {
+  BALANCE,
+  SOL_MINT,
+  classifyTrade,
+  type Flow,
+  type Trade,
+  type TradeTier,
+} from '@sol-warzone/protocol';
 
 import type { HttpClient } from '../http.js';
 
@@ -29,6 +36,22 @@ export interface TradeFeedOptions {
 
 /** How many hashes to remember for de-duplication. */
 const SEEN_CAPACITY = 4_000;
+
+export interface TradePollResult {
+  /** Heavy and above, delivered individually so the feed can list them. */
+  readonly trades: readonly Trade[];
+  /** Everything below, summed into one event. Null when nothing small arrived. */
+  readonly flow: Flow | null;
+}
+
+/**
+ * Tiers that reach the client as their own event. Everything else is summed.
+ *
+ * The client only ever lists heavy and above, so shipping the rest one by one
+ * bought nothing: measured on production, trades were 88.6% of all socket
+ * traffic at ~4.5/s with a median of $755.
+ */
+const LISTED_TIERS: readonly TradeTier[] = ['heavy', 'whale'];
 
 /**
  * Polls Jupiter's swap feed and turns it into sized, classified trades.
@@ -64,7 +87,7 @@ export class TradeFeed {
     return this.#refUsd;
   }
 
-  async poll(): Promise<Trade[]> {
+  async poll(): Promise<TradePollResult> {
     const payload = await this.#http.getJson<{ txs?: RawSwap[] }>(this.#url);
     const swaps = payload.txs ?? [];
 
@@ -76,14 +99,37 @@ export class TradeFeed {
     if (!this.#primed) {
       this.#primed = true;
       for (const swap of fresh) this.#updateReference(swap.usdVolume);
-      return [];
+      return { trades: [], flow: null };
     }
 
     // The endpoint returns newest first; the battle wants chronological order.
-    return fresh
+    const all = fresh
       .slice()
       .reverse()
       .map((swap) => this.#toTrade(swap));
+
+    const trades = all.filter((trade) => LISTED_TIERS.includes(trade.tier));
+    const summed = all.filter((trade) => !LISTED_TIERS.includes(trade.tier));
+
+    return { trades, flow: this.#toFlow(summed) };
+  }
+
+  /**
+   * Fold the small trades into one event.
+   *
+   * Returns null on an empty batch rather than a zeroed `Flow`: a quiet second
+   * should cost no frame at all. The two sets never overlap, so a client adding
+   * `Flow` to the individual `Trade`s double-counts nothing.
+   */
+  #toFlow(trades: readonly Trade[]): Flow | null {
+    if (trades.length === 0) return null;
+    let buyUsd = 0;
+    let sellUsd = 0;
+    for (const trade of trades) {
+      if (trade.side === 'buy') buyUsd += trade.usd;
+      else sellUsd += trade.usd;
+    }
+    return { type: 'flow', t: this.#now(), buyUsd, sellUsd, trades: trades.length };
   }
 
   #toTrade(swap: RawSwap): Trade {

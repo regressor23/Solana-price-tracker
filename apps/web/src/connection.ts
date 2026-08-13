@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  decodePulse,
   type FeedStatus,
   type ServerMessage,
 } from '@sol-warzone/protocol';
@@ -26,6 +27,24 @@ export interface ConnectionOptions {
 
 export const MIN_RETRY_MS = 500;
 export const MAX_RETRY_MS = 15_000;
+
+/**
+ * One frame in, one message out, or `null` for anything unreadable.
+ *
+ * The wire is deliberately mixed: binary carries only the 10 Hz pulse, where
+ * the byte count pays for a codec, and everything else stays JSON. A frame we
+ * cannot read is skipped rather than fatal — the next one is 100 ms away, and
+ * dropping a working connection over one bad frame would be the worse trade.
+ */
+function parseFrame(data: unknown): ServerMessage | null {
+  if (data instanceof ArrayBuffer) return decodePulse(data);
+  if (typeof data !== 'string') return null;
+  try {
+    return JSON.parse(data) as ServerMessage;
+  } catch {
+    return null;
+  }
+}
 
 /** Same-origin in production; the Vite dev server proxies /ws to the collector. */
 export function defaultSocketUrl(): string {
@@ -78,6 +97,9 @@ export class Connection {
   #connect(): void {
     this.#handlers.onState('connecting');
     const socket = this.#createSocket(this.#url());
+    // Without this the browser hands binary frames over as a Blob, which only
+    // reads asynchronously — the pulse would arrive a frame late for no reason.
+    socket.binaryType = 'arraybuffer';
     this.#socket = socket;
 
     socket.addEventListener('open', () => {
@@ -86,13 +108,8 @@ export class Connection {
     });
 
     socket.addEventListener('message', (event) => {
-      if (typeof event.data !== 'string') return;
-      let message: ServerMessage;
-      try {
-        message = JSON.parse(event.data) as ServerMessage;
-      } catch {
-        return;
-      }
+      const message = parseFrame(event.data);
+      if (!message) return;
       if (message.type === 'hello' && message.protocol !== PROTOCOL_VERSION) {
         // The server was redeployed with a newer contract than this bundle.
         this.#handlers.onState('closed', 'protocol mismatch — reload');
