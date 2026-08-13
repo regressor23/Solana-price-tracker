@@ -293,3 +293,25 @@ body.debug .stage {
  * would have overridden exactly that nuance — !important wins, so the two could
  * not coexist.
  */
+
+/* --------------------------------------------------------------- battlefield */
+
+/* The 2D prototype fills the stage. Phase 4 swaps the 2D context for WebGL on
+   this same element, so the layout does not move when the renderer changes.
+ *
+ * Absolutely positioned on purpose. A canvas has an intrinsic size, so an
+ * in-flow one with height:100% inside an auto-sized grid row feeds back on
+ * itself: the buffer resize grows the element, the element grows the row, the
+ * row grows the buffer. Measured 1073px of canvas in a 500px cell, which put
+ * the whole Nexus half of the field below the fold. Out of flow, it cannot
+ * influence the row it is measuring against. */
+.battlefield {
+  position: absolute;
+  inset: 0;
+  /* Both are needed. A canvas is a replaced element, so an absolutely
+     positioned one with width:auto takes its *intrinsic* 300x150 and ignores
+     the opposite inset rather than stretching. */
+  width: 100%;
+  height: 100%;
+  display: block;
+}

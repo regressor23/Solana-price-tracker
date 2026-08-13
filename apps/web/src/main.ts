@@ -1,5 +1,6 @@
 import type { FeedStatus, ServerMessage } from '@sol-warzone/protocol';
 
+import { BattleStage } from './battle/stage.js';
 import { Connection, badgeFor, type ConnectionState } from './connection.js';
 import { renderDebug } from './debug.js';
 import { clock, pct, usd } from './format.js';
@@ -48,7 +49,7 @@ if (isDebugRoute) {
   connection.open();
 } else {
   // -------------------------------------------------------------------------
-  // Main route — placeholder HUD until the battlefield lands in phase 4.
+  // Main route — the 2D battlefield prototype (phase 3). 3D lands in phase 4.
   // -------------------------------------------------------------------------
   const ui = {
     clock: el('clock'),
@@ -115,6 +116,11 @@ if (isDebugRoute) {
     ui.clock.textContent = `UTC ${clock()}`;
   }, 1000);
 
-  ui.stageNote.textContent = 'Phase 1 — live feed. Raw numbers at /debug.';
+  // The canvas replaces the placeholder note rather than sitting beside it.
+  const canvas = document.createElement('canvas');
+  canvas.className = 'battlefield';
+  ui.stageNote.replaceWith(canvas);
+  new BattleStage(canvas, store).start();
+
   connection.open();
 }
