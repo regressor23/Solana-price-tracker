@@ -107,10 +107,23 @@ export class Hub {
     const batch = this.#queue;
     this.#queue = [];
 
+    // A pulse is a snapshot of the battle, not an event in it, so only the
+    // newest one in a batch is worth sending — an older count is not history,
+    // it is a number that was already wrong when the next one arrived.
+    //
+    // This matters because the pulse timer and this flush are independent: at
+    // the same nominal rate they still drift, so a given flush carries zero,
+    // one or two. Dropping the stale one turns that jitter into a steady frame
+    // and costs nothing, since survivors keep their relative order.
+    const newestPulse = batch.findLastIndex((message) => message.type === 'pulse');
+    const sending = batch.filter(
+      (message, index) => message.type !== 'pulse' || index === newestPulse,
+    );
+
     // One encode for all clients, whatever the framing. The pulse goes out as
     // bytes because it runs at 10 Hz and JSON there costs more than the whole
     // trade stream it replaced; everything else stays readable.
-    const frames = batch.map((message) =>
+    const frames = sending.map((message) =>
       message.type === 'pulse' ? encodePulse(message) : JSON.stringify(message),
     );
     for (const socket of this.#wss.clients) {

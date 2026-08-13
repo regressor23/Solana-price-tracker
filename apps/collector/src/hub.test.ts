@@ -65,6 +65,29 @@ async function connect(settle = 250): Promise<{
   return { socket, messages, drain };
 }
 
+/** Keeps frames as they arrived, so the two wire formats stay distinguishable. */
+async function connectRaw(settle = 250) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  const frames: { binary: boolean; data: Buffer }[] = [];
+  socket.on('message', (raw: RawData, isBinary: boolean) => {
+    const data = Buffer.isBuffer(raw)
+      ? raw
+      : Array.isArray(raw)
+        ? Buffer.concat(raw)
+        : Buffer.from(raw);
+    frames.push({ binary: isBinary, data });
+  });
+  await new Promise((resolve, reject) => {
+    socket.once('open', resolve);
+    socket.once('error', reject);
+  });
+  const drain = async () => {
+    await new Promise((resolve) => setTimeout(resolve, settle));
+    return frames;
+  };
+  return { socket, drain };
+}
+
 describe('handshake', () => {
   it('greets a new client with the protocol version and pair', async () => {
     const { socket, drain } = await connect();
@@ -243,29 +266,6 @@ describe('lifecycle', () => {
 });
 
 describe('framing', () => {
-  /** Keeps frames as they arrived, so the two wire formats stay distinguishable. */
-  async function connectRaw(settle = 250) {
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    const frames: { binary: boolean; data: Buffer }[] = [];
-    socket.on('message', (raw: RawData, isBinary: boolean) => {
-      const data = Buffer.isBuffer(raw)
-        ? raw
-        : Array.isArray(raw)
-          ? Buffer.concat(raw)
-          : Buffer.from(raw);
-      frames.push({ binary: isBinary, data });
-    });
-    await new Promise((resolve, reject) => {
-      socket.once('open', resolve);
-      socket.once('error', reject);
-    });
-    const drain = async () => {
-      await new Promise((resolve) => setTimeout(resolve, settle));
-      return frames;
-    };
-    return { socket, drain };
-  }
-
   it('sends the pulse as bytes and everything else as text', async () => {
     // The junction of the two formats. Getting this wrong would either cost the
     // bandwidth the codec exists to save, or hand the client unparseable JSON.
@@ -324,6 +324,51 @@ describe('framing', () => {
       .map((f) => (f.binary ? 'binary' : 'text'));
 
     expect(shape).toEqual(['text', 'binary', 'text']);
+    socket.close();
+  });
+});
+
+describe('pulse coalescing', () => {
+  it('sends only the newest pulse when a flush caught several', async () => {
+    // The pulse timer and the flush run at the same nominal rate on separate
+    // clocks, so batches of two happen. An older count is not history — it was
+    // already wrong when the next one arrived.
+    const { socket, drain } = await connectRaw();
+    for (let orcAlive = 200; orcAlive >= 197; orcAlive--) {
+      hub.publish({
+        type: 'pulse',
+        t: orcAlive,
+        orcAlive,
+        nexusAlive: 150,
+        frontLine: 0,
+      });
+    }
+
+    const binary = (await drain()).filter((f) => f.binary);
+    expect(binary).toHaveLength(1);
+    expect(new DataView(Uint8Array.from(binary[0]!.data).buffer).getUint16(1)).toBe(
+      197,
+    );
+    socket.close();
+  });
+
+  it('keeps every non-pulse event and their order', async () => {
+    // Coalescing must touch pulses and nothing else: a dropped Flow would lose
+    // volume that no later message repeats.
+    const { socket, drain } = await connectRaw();
+    hub.publish({ type: 'flow', t: 1, buyUsd: 1, sellUsd: 1, trades: 1 });
+    hub.publish({ type: 'pulse', t: 2, orcAlive: 1, nexusAlive: 1, frontLine: 0 });
+    hub.publish({ type: 'flow', t: 3, buyUsd: 2, sellUsd: 2, trades: 2 });
+    hub.publish({ type: 'pulse', t: 4, orcAlive: 9, nexusAlive: 9, frontLine: 0 });
+
+    const frames = (await drain()).filter(
+      (f) => f.binary || !f.data.includes('"hello"'),
+    );
+    expect(frames.map((f) => (f.binary ? 'binary' : 'text'))).toEqual([
+      'text',
+      'text',
+      'binary',
+    ]);
     socket.close();
   });
 });
