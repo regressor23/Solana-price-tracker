@@ -1,39 +1,18 @@
 import type { BattleField, Unit } from './field.js';
+import { paletteFrom, type Palette } from './palette.js';
+import type { FieldRenderer } from './renderer.js';
 
 /**
  * Draws a `BattleField` onto a 2D context.
  *
- * Deliberately the only file here that knows what a canvas is: the field
- * itself is pure state, so the part worth testing does not need one.
+ * Written in phase 3 as the prototype, kept in phase 4 as the fallback. It is
+ * the same drawing either way, because it draws the same `BattleField` the 3D
+ * scene does — a browser without WebGL sees a plainer battle, not a different
+ * one, and there is no second set of rules to keep in step.
  *
  * Colours come from the design system's tokens rather than literals, so the
  * prototype and the HUD cannot drift apart while both are being built.
  */
-
-export interface Palette {
-  orc: string;
-  nexus: string;
-  orcDim: string;
-  nexusDim: string;
-  line: string;
-  ink: string;
-}
-
-const token = (styles: CSSStyleDeclaration, name: string, fallback: string): string =>
-  styles.getPropertyValue(name).trim() || fallback;
-
-/** Read the palette once; these are custom properties, not per-frame state. */
-export function paletteFrom(element: Element): Palette {
-  const styles = getComputedStyle(element);
-  return {
-    orc: token(styles, '--orc', '#c4472c'),
-    nexus: token(styles, '--nexus', '#00d4ff'),
-    orcDim: token(styles, '--orc-deep', '#8b1a1a'),
-    nexusDim: token(styles, '--nexus-deep', '#0a2a3a'),
-    line: token(styles, '--line-strong', '#2a3542'),
-    ink: token(styles, '--bg', '#07090c'),
-  };
-}
 
 const UNIT_RADIUS = 2.4;
 
@@ -55,6 +34,60 @@ export function drawField(
   }
   for (const unit of field.units) {
     if (unit.state !== 'dying') drawUnit(ctx, unit, palette, width, height);
+  }
+}
+
+/**
+ * The 2D renderer as the stage sees it.
+ *
+ * Owns its canvas rather than being handed one: which renderer a browser gets
+ * is decided at runtime, and a canvas that has been given a WebGL context can
+ * never be given a 2D one. Creating the element alongside the context is the
+ * only way that stays true after a fallback.
+ */
+export class Canvas2DRenderer implements FieldRenderer {
+  readonly kind = 'canvas2d';
+  readonly #canvas: HTMLCanvasElement;
+  readonly #ctx: CanvasRenderingContext2D;
+  readonly #palette: Palette;
+  #width = 0;
+  #height = 0;
+
+  constructor(host: HTMLElement) {
+    this.#canvas = document.createElement('canvas');
+    this.#canvas.className = 'battlefield';
+    host.append(this.#canvas);
+
+    const ctx = this.#canvas.getContext('2d');
+    if (!ctx) throw new Error('2d context unavailable');
+    this.#ctx = ctx;
+    this.#palette = paletteFrom(this.#canvas);
+  }
+
+  resize(width: number, height: number): void {
+    // Draw at device resolution; the CSS box stays the layout size.
+    const ratio = window.devicePixelRatio || 1;
+    this.#width = width;
+    this.#height = height;
+
+    const backingWidth = Math.round(width * ratio);
+    const backingHeight = Math.round(height * ratio);
+    if (backingWidth === this.#canvas.width && backingHeight === this.#canvas.height) {
+      return;
+    }
+    // Assigning either dimension clears the canvas, so only do it on a real
+    // change — otherwise an observer that fires per frame would blank every one.
+    this.#canvas.width = backingWidth;
+    this.#canvas.height = backingHeight;
+    this.#ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+
+  draw(field: BattleField): void {
+    drawField(this.#ctx, field, this.#palette, this.#width, this.#height);
+  }
+
+  dispose(): void {
+    this.#canvas.remove();
   }
 }
 

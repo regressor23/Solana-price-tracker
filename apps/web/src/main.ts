@@ -49,7 +49,8 @@ if (isDebugRoute) {
   connection.open();
 } else {
   // -------------------------------------------------------------------------
-  // Main route — the 2D battlefield prototype (phase 3). 3D lands in phase 4.
+  // Main route — the battlefield. Which renderer draws it is the stage's
+  // business; this side only reports which one answered, and how fast.
   // -------------------------------------------------------------------------
   const ui = {
     clock: el('clock'),
@@ -100,8 +101,16 @@ if (isDebugRoute) {
     const { counts } = store.state;
     ui.log.textContent =
       `ticks ${counts.tick} · trades ${counts.trade} · depth ${counts.depth}` +
+      ` · ${stage.rendererKind} ${stage.fps} fps · [c] camera` +
       ` — raw feed at /debug`;
   };
+
+  // Built before the connection so `onMessage` has a stage to report on. The
+  // renderer creates its own canvas — the element type follows from which one
+  // the browser can run — so the placeholder note only has to get out of the way.
+  ui.stageNote.remove();
+  const stage = new BattleStage(el('stage'), store);
+  stage.start();
 
   const connection = new Connection({
     onMessage,
@@ -115,12 +124,6 @@ if (isDebugRoute) {
   setInterval(() => {
     ui.clock.textContent = `UTC ${clock()}`;
   }, 1000);
-
-  // The canvas replaces the placeholder note rather than sitting beside it.
-  const canvas = document.createElement('canvas');
-  canvas.className = 'battlefield';
-  ui.stageNote.replaceWith(canvas);
-  new BattleStage(canvas, store).start();
 
   connection.open();
 }

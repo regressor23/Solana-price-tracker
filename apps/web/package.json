@@ -12,9 +12,11 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@sol-warzone/protocol": "*"
+    "@sol-warzone/protocol": "*",
+    "three": "^0.185.1"
   },
   "devDependencies": {
+    "@types/three": "^0.185.4",
     "happy-dom": "^20.11.2",
     "vite": "^8.2.1"
   }

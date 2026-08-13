@@ -170,6 +170,101 @@ describe('divergence', () => {
   });
 });
 
+describe('formation', () => {
+  it('gives the army depth instead of one long line', () => {
+    // Two hundred units on a single line looked fine from directly overhead
+    // and became one glowing stripe the moment a perspective camera was
+    // pointed at it. Ranks are what make the mass read as an army.
+    const f = field();
+    f.applyPulse(pulse(200, 200));
+    run(f, 8);
+
+    const orcs = f.units.filter((u) => u.faction === 'orc').map((u) => u.y);
+    const spread = Math.max(...orcs) - Math.min(...orcs);
+    expect(spread).toBeGreaterThan(0.1);
+    // …but still an army facing a line, not a crowd filling the field.
+    expect(spread).toBeLessThan(0.25);
+  });
+
+  it('holds the ranks in order, closest to the front first', () => {
+    const f = field();
+    f.applyPulse(pulse(200, 200));
+    run(f, 8);
+
+    const front = f.frontY;
+    const orcs = f.units.filter((u) => u.faction === 'orc');
+    for (const unit of orcs) {
+      // Orcs hold the near side of the line, and deeper ranks stand further
+      // back from it — never on the far side of it.
+      expect(unit.y).toBeLessThan(front);
+    }
+    const contact = orcs.filter((u) => u.rank === 0).map((u) => u.y);
+    const reserve = orcs.filter((u) => u.rank >= 5).map((u) => u.y);
+    expect(Math.max(...reserve)).toBeLessThan(Math.min(...contact));
+  });
+
+  it('spaces the files across the width', () => {
+    const f = field();
+    f.applyPulse(pulse(200, 200));
+    run(f, 1);
+
+    const xs = f.units.map((u) => u.x).sort((a, b) => a - b);
+    expect(xs[0]).toBeLessThan(0.1);
+    expect(xs[xs.length - 1]).toBeGreaterThan(0.9);
+  });
+});
+
+describe('events', () => {
+  it('reports a death where the unit was standing', () => {
+    // An effect drawn anywhere but on the casualty is worse than no effect:
+    // it says something happened over there, and nothing did.
+    const f = field();
+    f.applyPulse(pulse(120, 120));
+    run(f, 4);
+
+    const before = f.units
+      .filter((u) => u.faction === 'orc')
+      .map((u) => `${u.x},${u.y}`);
+    f.applyPulse(pulse(100, 120));
+    f.advance(1_000 / 60);
+
+    const deaths = f.events.filter((e) => e.kind === 'death');
+    expect(deaths).toHaveLength(20);
+    for (const death of deaths) {
+      expect(death.faction).toBe('orc');
+      expect(before).toContain(`${death.x},${death.y}`);
+    }
+  });
+
+  it('describes one step and not the ones before it', () => {
+    const f = field();
+    f.applyPulse(pulse(120, 120));
+    f.advance(1_000 / 60);
+    f.applyPulse(pulse(110, 120));
+    f.advance(1_000 / 60);
+    expect(f.events.length).toBeGreaterThan(0);
+
+    // Nothing new happened, so nothing should be reported again — otherwise a
+    // renderer that plays events every frame plays each death forever.
+    f.advance(1_000 / 60);
+    expect(f.events).toHaveLength(0);
+  });
+
+  it('says nothing at all about a resync', () => {
+    // Rebuilding the field is the picture admitting it lost the thread, not
+    // four hundred units arriving at once.
+    const f = field();
+    f.applyPulse(pulse(200, 200));
+    run(f, 2);
+
+    f.applyPulse(pulse(60, 240));
+    f.advance(1_000 / 60);
+
+    expect(f.resyncs).toBe(2);
+    expect(f.events).toHaveLength(0);
+  });
+});
+
 describe('front line', () => {
   it('eases between pulses instead of jumping every hundred milliseconds', () => {
     const f = field();

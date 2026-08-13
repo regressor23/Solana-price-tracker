@@ -1,8 +1,9 @@
 import type { Pulse } from '@sol-warzone/protocol';
 import { describe, expect, it } from 'vitest';
 
-import { drawField, type Palette } from './canvas.js';
+import { drawField } from './canvas.js';
 import { BattleField } from './field.js';
+import type { Palette } from './palette.js';
 
 /**
  * The renderer, checked without a browser.

@@ -27,6 +27,16 @@ export interface Unit {
   state: UnitState;
   /** Seconds spent in the current state. */
   stateAge: number;
+  /**
+   * Place in the formation, dealt once at spawn and kept for life.
+   *
+   * Dealt at random rather than allocated: a free list would keep the ranks
+   * perfectly packed, at the cost of a unit inheriting a dead one's position
+   * halfway across the field. Random cells leave gaps where the fighting was
+   * heaviest and fill them as reinforcements arrive, which is both cheaper and
+   * a better description of what is happening.
+   */
+  readonly rank: number;
 }
 
 /**
@@ -46,6 +56,23 @@ const DEATH_SEC = 0.5;
 const SPAWNS_PER_SEC = 25;
 
 /**
+ * Formation. Every unit is dealt a file and a rank when it arrives, and holds
+ * that place at the front for as long as it lives.
+ *
+ * Left undone in phase 3 (plan item 17) because two hundred dots on one line
+ * still looked like a line from directly above. Seen from a perspective camera
+ * it does not: 250 units across the field's width stand half a unit apart and
+ * overlap into a single glowing stripe with no depth. Formation is what makes
+ * the mass read as an army, and it belongs here rather than in a renderer,
+ * because both renderers draw these same coordinates.
+ */
+const FILES_PER_RANK = 40;
+const RANKS = 8;
+
+/** Depth between ranks, in field units. Eight ranks come to about a sixth of the field. */
+const RANK_GAP = 0.021;
+
+/**
  * Unit gap that means the client lost the thread rather than fell behind.
  *
  * A backgrounded tab stops rendering while the socket keeps delivering, so a
@@ -56,6 +83,21 @@ const RESYNC_GAP = 40;
 
 /** …and the same conclusion from the other direction: nothing drawn for this long. */
 const RESYNC_STALL_MS = 1_000;
+
+/**
+ * Something the picture should punctuate: a unit arriving, or falling.
+ *
+ * The field already knows when both happen, and a renderer that had to work it
+ * out again — by diffing states between frames, or by trusting that a `stateAge`
+ * of zero means "this frame" — would be re-deriving it from evidence. Reported
+ * instead, in field coordinates, for whoever wants to put an effect there.
+ */
+export interface FieldEvent {
+  readonly kind: 'spawn' | 'death';
+  readonly faction: Faction;
+  readonly x: number;
+  readonly y: number;
+}
 
 export interface BattleFieldOptions {
   /** Seeded in tests so a layout assertion cannot flake. */
@@ -74,6 +116,7 @@ export class BattleField {
   #spawnCredit: Record<Faction, number> = { orc: 0, nexus: 0 };
   #sawFirstPulse = false;
   #resyncs = 0;
+  #events: FieldEvent[] = [];
 
   constructor(options: BattleFieldOptions = {}) {
     this.#random = options.random ?? Math.random;
@@ -91,6 +134,11 @@ export class BattleField {
   /** How many times the picture had to snap rather than animate. */
   get resyncs(): number {
     return this.#resyncs;
+  }
+
+  /** What happened during the last `advance`. Empty until one has run. */
+  get events(): readonly FieldEvent[] {
+    return this.#events;
   }
 
   /** Units that count toward the total. The dying are on screen but spent. */
@@ -128,6 +176,9 @@ export class BattleField {
   advance(dtMs: number): void {
     if (!(dtMs > 0)) return;
     const dt = dtMs / 1_000;
+    // Events describe this step and no other, so a renderer that draws every
+    // frame plays each one exactly once.
+    this.#events = [];
 
     // The front line eases rather than snapping: pulses are 100 ms apart and
     // frames are 16, so six frames of every ten would otherwise be still.
@@ -192,35 +243,44 @@ export class BattleField {
     for (const unit of candidates) {
       unit.state = 'dying';
       unit.stateAge = 0;
+      this.#events.push({ kind: 'death', faction, x: unit.x, y: unit.y });
     }
   }
 
   #spawn(faction: Faction, state: UnitState): void {
     const baseY = faction === 'orc' ? ORC_BASE_Y : NEXUS_BASE_Y;
-    this.#units.push({
+    const file = Math.floor(this.#random() * FILES_PER_RANK);
+    const unit: Unit = {
       id: this.#nextId++,
       faction,
-      x: 0.06 + this.#random() * 0.88,
+      // Files are a grid, with enough jitter that the line is not a ruler.
+      x: (file + 0.5) / FILES_PER_RANK + (this.#random() - 0.5) * 0.012,
       // Spread the base band a little so reinforcements are not a straight line.
       y: baseY + (this.#random() - 0.5) * 0.06,
       state,
       stateAge: 0,
-    });
+      rank: Math.floor(this.#random() * RANKS),
+    };
+    this.#units.push(unit);
+    this.#events.push({ kind: 'spawn', faction, x: unit.x, y: unit.y });
   }
 
   /**
-   * Walk toward the front and hold there.
+   * Walk to your place in the line and hold it.
    *
-   * Not boids: a unit seeks the line, slows as it arrives, and drifts sideways
-   * away from whoever is nearest. That is enough for the mass to read as two
-   * armies, which is all this prototype has to prove.
+   * Not boids: a unit seeks its own rank, slows as it arrives, and shuffles a
+   * little once there. Steering that avoided neighbours would break the very
+   * formation the ranks exist to create.
    */
   #march(dt: number): void {
     const front = this.frontY;
     for (const unit of this.#units) {
       if (unit.state === 'dying' || unit.state === 'spawning') continue;
 
-      const stopAt = unit.faction === 'orc' ? front - 0.02 : front + 0.02;
+      // Deeper ranks stand further back, so the army has depth and only the
+      // front rank is in contact — which is also where `#kill` takes from.
+      const depth = 0.02 + unit.rank * RANK_GAP;
+      const stopAt = unit.faction === 'orc' ? front - depth : front + depth;
       const toFront = stopAt - unit.y;
       const distance = Math.abs(toFront);
 
@@ -244,6 +304,11 @@ export class BattleField {
       const count = Math.min(this.#target[faction], BALANCE.poolPerSide);
       for (let i = 0; i < count; i++) this.#spawn(faction, 'marching');
     }
+
+    // A resync is the picture admitting it lost the thread; it is not four
+    // hundred simultaneous arrivals. Whatever the rebuild pushed is discarded,
+    // so nothing downstream celebrates it.
+    this.#events = [];
   }
 }
 

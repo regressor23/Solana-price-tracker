@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SOL Warzone — scene probe</title>
+    <link rel="stylesheet" href="/src/tokens.css" />
+    <style>
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--muted);
+        font: 12px/1.6 var(--font-mono, monospace);
+      }
+      canvas {
+        display: block;
+      }
+      p {
+        padding: 8px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Dev only. Vite builds `index.html` and nothing else, so this never ships.
+
+      The scene, rendered without a socket, a clock or an animation frame. It
+      exists for the two questions a running app answers badly:
+
+      · what does a given state look like — a background tab gets no frames, so
+        "open it and look" is not a method. Here the field is stepped a fixed
+        number of times and drawn once, which makes a screenshot reproducible.
+      · what does a frame cost — `requestAnimationFrame` is capped at the
+        refresh rate, so a loop through it can only ever report 60 and would
+        hide a 15 ms frame right up to the moment it becomes 17.
+
+      /shot.html?preset=front&front=-0.5&orc=250&nexus=250&w=1920&h=1080
+      then `__bench()` in the console.
+    -->
+    <script type="module">
+      import { WebGLRenderer } from 'three';
+      import { BattleField } from '/src/battle/field.ts';
+      import { scenePaletteFrom } from '/src/battle/palette.ts';
+      import { BattleScene } from '/src/battle/scene.ts';
+
+      const query = new URLSearchParams(location.search);
+      const number = (name, fallback) => Number(query.get(name) ?? fallback);
+
+      const W = number('w', 960);
+      const H = number('h', 540);
+      const orc = number('orc', 210);
+      const nexus = number('nexus', 165);
+      const front = number('front', 0);
+
+      const canvas = document.createElement('canvas');
+      document.body.append(canvas);
+      const renderer = new WebGLRenderer({
+        canvas,
+        antialias: true,
+        // So a screenshot can be taken after the frame rather than during it.
+        preserveDrawingBuffer: true,
+      });
+      renderer.setPixelRatio(1);
+      renderer.setSize(W, H, false);
+
+      const scene = new BattleScene(scenePaletteFrom(document.body));
+      scene.setPreset(query.get('preset') ?? 'tactical');
+      scene.setSize(W, H);
+
+      const field = new BattleField();
+      const step = () => {
+        field.advance(1000 / 60);
+        scene.update(field, 1 / 60);
+      };
+
+      field.applyPulse({ orcAlive: orc, nexusAlive: nexus, frontLine: front });
+      for (let i = 0; i < 60 * 6; i++) step();
+      // A round of casualties, so the death effect is in the frame rather than
+      // in the half second either side of it.
+      field.applyPulse({ orcAlive: orc - 25, nexusAlive: nexus, frontLine: front });
+      for (let i = 0; i < 8; i++) step();
+      renderer.render(scene.scene, scene.camera);
+
+      const note = document.createElement('p');
+      note.textContent = `${W}×${H} · ${field.units.length} units · preset ${scene.preset} · __bench() for frame cost`;
+      document.body.append(note);
+
+      window.__bench = () => {
+        const gl = renderer.getContext();
+        const warmup = 30;
+        const frames = 300;
+        for (let i = 0; i < warmup; i++) {
+          step();
+          renderer.render(scene.scene, scene.camera);
+        }
+        gl.finish();
+
+        const started = performance.now();
+        for (let i = 0; i < frames; i++) {
+          step();
+          renderer.render(scene.scene, scene.camera);
+        }
+        gl.finish();
+
+        const ms = (performance.now() - started) / frames;
+        return {
+          msPerFrame: Number(ms.toFixed(2)),
+          units: field.units.length,
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+        };
+      };
+    </script>
+  </body>
+</html>
