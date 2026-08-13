@@ -18,12 +18,24 @@ interface Options {
   failPriceAfter?: number;
 }
 
+/**
+ * Lets a test switch the upstream off and on mid-run.
+ *
+ * Counting calls would have been the obvious way, but the poller backs off on
+ * repeated errors, so how many it makes during a given stretch is exactly the
+ * kind of number that quietly stops being true.
+ */
+interface Control {
+  priceDown: boolean;
+}
+
 function harness(options: Options = {}) {
   const events: MarketEvent[] = [];
   const statuses: { status: FeedStatus; detail?: string }[] = [];
   let swapPoll = 0;
   let blockId = 1_000;
   let priceCalls = 0;
+  const control: Control = { priceDown: false };
 
   vi.stubGlobal('fetch', (url: string) => {
     const { pathname, searchParams } = new URL(url);
@@ -31,6 +43,7 @@ function harness(options: Options = {}) {
     if (pathname.startsWith('/price/v3')) {
       priceCalls++;
       const dead =
+        control.priceDown ||
         options.failPrice ||
         (options.failPriceAfter !== undefined && priceCalls > options.failPriceAfter);
       if (dead) {
@@ -100,7 +113,7 @@ function harness(options: Options = {}) {
       statuses.push(detail === undefined ? { status } : { status, detail }),
   });
 
-  return { feeds, events, statuses };
+  return { feeds, events, statuses, control };
 }
 
 const settle = async (rounds = 20) => {
@@ -322,22 +335,77 @@ describe('demo mode', () => {
   });
 
   it('drops the generator the moment real data returns', async () => {
-    // Invented data must never outlive the outage that justified it.
-    const h = harness({ failPriceAfter: 2 });
+    // Invented data must never outlive the outage that justified it, and the
+    // page must not keep two markets running at once.
+    const h = harness();
     h.feeds.start();
     await settle();
+
+    h.control.priceDown = true;
     await vi.advanceTimersByTimeAsync(OUTAGE_MS);
     await settle();
     expect(h.feeds.diagnostics().status).toBe('demo');
 
-    // The stub only fails by count, so a fresh harness stands in for recovery:
-    // what matters is that a successful poll takes the status back off demo.
-    const healthy = harness();
-    healthy.feeds.start();
+    // The upstream answers again. One good poll is enough.
+    h.control.priceDown = false;
+    await vi.advanceTimersByTimeAsync(30_000);
     await settle();
-    healthy.feeds.stop();
-    expect(healthy.feeds.diagnostics().status).toBe('live');
+    expect(h.feeds.diagnostics().status).toBe('live');
 
+    const afterRecovery = h.events.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle();
     h.feeds.stop();
+
+    // Five seconds of live feed is a couple of price ticks, not the five ticks
+    // and five flows a still-running generator would have added on top.
+    expect(h.events.length - afterRecovery).toBeLessThan(6);
+  });
+});
+
+describe('aggregate on the wire', () => {
+  it('publishes the small trades as one Flow, not as rows', async () => {
+    // The end-to-end shape of the traffic change: three small swaps arrive as
+    // a single summed event, and none of them reaches the feed.
+    const h = harness({
+      swapPages: [
+        [],
+        [
+          { type: 'buy', usdVolume: 300, txHash: 'a' },
+          { type: 'sell', usdVolume: 200, txHash: 'b' },
+          { type: 'buy', usdVolume: 100, txHash: 'c' },
+        ],
+      ],
+    });
+    h.feeds.start();
+    await settle();
+    await vi.advanceTimersByTimeAsync(1_100);
+    await settle();
+    h.feeds.stop();
+
+    const flows = h.events.filter((e) => e.type === 'flow');
+    expect(flows).toHaveLength(1);
+    expect(flows[0]).toMatchObject({ buyUsd: 400, sellUsd: 200, trades: 3 });
+    expect(h.events.filter((e) => e.type === 'trade')).toHaveLength(0);
+  });
+
+  it('still sends a listed trade on its own alongside the sum', async () => {
+    const h = harness({
+      swapPages: [
+        [],
+        [
+          { type: 'buy', usdVolume: 6_100, txHash: 'big' },
+          { type: 'sell', usdVolume: 200, txHash: 'small' },
+        ],
+      ],
+    });
+    h.feeds.start();
+    await settle();
+    await vi.advanceTimersByTimeAsync(1_100);
+    await settle();
+    h.feeds.stop();
+
+    expect(h.events.filter((e) => e.type === 'trade')).toHaveLength(1);
+    expect(h.events.filter((e) => e.type === 'flow')).toHaveLength(1);
   });
 });

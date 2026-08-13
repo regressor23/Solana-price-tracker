@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BALANCE,
+  BROADCAST_HZ,
   DEPTH_LADDER_SOL,
   FRAME_PULSE,
   PULSE_BYTES,
+  PULSE_HZ,
   classifyTrade,
   decodePulse,
   encodePulse,
@@ -120,6 +122,25 @@ describe('pulse codec', () => {
     const wrongKind = encodePulse(pulse);
     new DataView(wrongKind).setUint8(0, FRAME_PULSE + 1);
     expect(decodePulse(wrongKind)).toBeNull();
+  });
+
+  it('cannot outrun the broadcast that carries it', () => {
+    // The hub flushes at BROADCAST_HZ. A pulse rate above that would not make
+    // the battle smoother — it would queue frames and deliver them in bursts,
+    // which is worse than the lower rate it was meant to improve on.
+    expect(PULSE_HZ).toBeLessThanOrEqual(BROADCAST_HZ);
+  });
+
+  it('costs less at its own rate than one JSON frame a second would', () => {
+    // The argument that justified a hand-rolled codec, pinned as arithmetic.
+    const asJson = JSON.stringify({
+      type: 'pulse',
+      t: Date.now(),
+      orcAlive: 203,
+      nexusAlive: 138,
+      frontLine: -0.327,
+    }).length;
+    expect(PULSE_BYTES * PULSE_HZ).toBeLessThan(asJson);
   });
 
   it('stamps arrival time, since the wire does not carry it', () => {

@@ -175,3 +175,45 @@ describe('repeat renders', () => {
     expect(root.querySelectorAll('.dbg__trade').length).toBeLessThanOrEqual(25);
   });
 });
+
+describe('battle readout', () => {
+  it('waits rather than inventing a battle before the first pulse', () => {
+    renderDebug(root, store, 'open');
+    expect(text()).toContain('BATTLE');
+    expect(text()).toMatch(/orcs alive\s*waiting/i);
+  });
+
+  it('shows the server-authored counts and the line between them', () => {
+    // This is the readout that answers "is the score wrong, or the render?".
+    store.apply({
+      type: 'pulse',
+      t: 1,
+      orcAlive: 203,
+      nexusAlive: 138,
+      frontLine: -0.327,
+    });
+    renderDebug(root, store, 'open');
+
+    const out = text();
+    expect(out).toContain('203');
+    expect(out).toContain('138');
+    expect(out).toContain('-32.7%');
+  });
+
+  it('separates listed trades from aggregated ones', () => {
+    // Two different numbers now: how many trades happened, and how many the
+    // feed will show. Conflating them would hide the whole aggregation.
+    store.apply({ type: 'flow', t: 1, buyUsd: 900, sellUsd: 400, trades: 12 });
+    store.apply({
+      type: 'trade',
+      t: 2,
+      side: 'buy',
+      usd: 6_100,
+      price: 75.85,
+      tier: 'heavy',
+    });
+    renderDebug(root, store, 'open');
+
+    expect(text()).toMatch(/trades seen\s*13/i);
+  });
+});

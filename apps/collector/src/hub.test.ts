@@ -1,7 +1,12 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { PROTOCOL_VERSION, type ServerMessage } from '@sol-warzone/protocol';
+import {
+  PROTOCOL_VERSION,
+  PULSE_BYTES,
+  decodePulse,
+  type ServerMessage,
+} from '@sol-warzone/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket, { type RawData } from 'ws';
 
@@ -234,5 +239,91 @@ describe('lifecycle', () => {
     await hub.close();
     // 1001 "going away" tells the client this was a restart, not an error.
     await expect(closed).resolves.toBe(1001);
+  });
+});
+
+describe('framing', () => {
+  /** Keeps frames as they arrived, so the two wire formats stay distinguishable. */
+  async function connectRaw(settle = 250) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const frames: { binary: boolean; data: Buffer }[] = [];
+    socket.on('message', (raw: RawData, isBinary: boolean) => {
+      const data = Buffer.isBuffer(raw)
+        ? raw
+        : Array.isArray(raw)
+          ? Buffer.concat(raw)
+          : Buffer.from(raw);
+      frames.push({ binary: isBinary, data });
+    });
+    await new Promise((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const drain = async () => {
+      await new Promise((resolve) => setTimeout(resolve, settle));
+      return frames;
+    };
+    return { socket, drain };
+  }
+
+  it('sends the pulse as bytes and everything else as text', async () => {
+    // The junction of the two formats. Getting this wrong would either cost the
+    // bandwidth the codec exists to save, or hand the client unparseable JSON.
+    const { socket, drain } = await connectRaw();
+    hub.publish({
+      type: 'pulse',
+      t: 1,
+      orcAlive: 203,
+      nexusAlive: 138,
+      frontLine: -0.327,
+    });
+    hub.publish({ type: 'flow', t: 2, buyUsd: 900, sellUsd: 400, trades: 5 });
+
+    const frames = (await drain()).filter(
+      (f) => f.binary || !f.data.includes('"hello"'),
+    );
+    const binary = frames.filter((f) => f.binary);
+    const text = frames.filter((f) => !f.binary);
+
+    expect(binary).toHaveLength(1);
+    expect(binary[0]?.data).toHaveLength(PULSE_BYTES);
+    expect(text.some((f) => f.data.toString('utf8').includes('"flow"'))).toBe(true);
+    socket.close();
+  });
+
+  it('sends a pulse the client can actually read back', async () => {
+    const { socket, drain } = await connectRaw();
+    hub.publish({
+      type: 'pulse',
+      t: 1,
+      orcAlive: 41,
+      nexusAlive: 219,
+      frontLine: 0.712,
+    });
+
+    const frame = (await drain()).find((f) => f.binary);
+    // Copy rather than slice the view: Buffer can sit on a SharedArrayBuffer,
+    // and the codec takes a plain one.
+    const decoded = frame ? decodePulse(Uint8Array.from(frame.data).buffer) : null;
+
+    expect(decoded).toMatchObject({ orcAlive: 41, nexusAlive: 219 });
+    expect(decoded?.frontLine).toBeCloseTo(0.712, 4);
+    socket.close();
+  });
+
+  it('keeps order across the two formats', async () => {
+    // The client applies these in sequence; a pulse overtaking the depth it was
+    // derived from would show a battle reacting before its cause arrived.
+    const { socket, drain } = await connectRaw();
+    hub.publish({ type: 'flow', t: 1, buyUsd: 1, sellUsd: 1, trades: 1 });
+    hub.publish({ type: 'pulse', t: 2, orcAlive: 1, nexusAlive: 2, frontLine: 0 });
+    hub.publish({ type: 'flow', t: 3, buyUsd: 2, sellUsd: 2, trades: 2 });
+
+    const shape = (await drain())
+      .filter((f) => f.binary || !f.data.includes('"hello"'))
+      .map((f) => (f.binary ? 'binary' : 'text'));
+
+    expect(shape).toEqual(['text', 'binary', 'text']);
+    socket.close();
   });
 });
