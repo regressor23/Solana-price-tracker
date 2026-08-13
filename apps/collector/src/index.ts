@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { PAIR_LABEL, PROTOCOL_VERSION } from '@sol-warzone/protocol';
 
+import { BattleLoop } from './battle/loop.js';
 import { config } from './config.js';
 import { MarketFeeds } from './feeds/index.js';
 import { Hub } from './hub.js';
@@ -76,14 +77,26 @@ const server = http.createServer((req, res) => {
 
 const hub = new Hub(server, config.heartbeatMs);
 
+// Declared before the feeds so their publish callback can hand it every event.
+// eslint-disable-next-line prefer-const -- the two are mutually referential.
+let battle: BattleLoop;
+
 const feeds = new MarketFeeds({
   liteUrl: config.jupiter.liteUrl,
   keyedUrl: config.jupiter.keyedUrl,
   dataUrl: config.jupiter.dataUrl,
   rps: config.jupiter.rps,
   ...(config.jupiter.apiKey ? { apiKey: config.jupiter.apiKey } : {}),
-  publish: (event) => hub.publish(event),
+  publish: (event) => {
+    battle.observe(event);
+    hub.publish(event);
+  },
   setStatus: (status, detail) => hub.setStatus(status, detail),
+});
+
+battle = new BattleLoop({
+  publish: (event) => hub.publish(event),
+  volumePerMinute: () => feeds.diagnostics().volumePerMinute,
 });
 
 hub.onSnapshotRequest(() => feeds.snapshot());
@@ -100,11 +113,13 @@ server.listen(config.port, config.host, () => {
     );
   }
   feeds.start();
+  battle.start();
 });
 
 const shutdown = (signal: string): void => {
   console.log(`[collector] ${signal} — shutting down`);
   feeds.stop();
+  battle.stop();
   void hub.close().then(() => {
     server.close(() => process.exit(0));
   });
