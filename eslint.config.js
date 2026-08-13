@@ -3,7 +3,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/*.tsbuildinfo'],
+    // `coverage/` is generated: the HTML reporter drops its own scripts there,
+    // and type-aware linting fails on them because no tsconfig owns them.
+    ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', '**/*.tsbuildinfo'],
   },
 
   js.configs.recommended,

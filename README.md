@@ -86,10 +86,17 @@ just at a slower cadence.
 
 ```bash
 npm run check          # format + lint + typecheck + test
+npm run test:coverage  # the same tests, with a coverage report
 ```
 
-CI runs the same thing on every push and pull request, then builds, then boots
-the production server and smoke-tests it.
+CI runs the first of those on every push and pull request, then builds, then
+boots the production server and smoke-tests it.
+
+Coverage is reported and never enforced, and it is not part of `check`. A
+threshold buys tests written for the percentage, and the ones worth having
+covered no new lines at all: a pulse that arrives twice, a frame that took no
+time, a unit count the wire can carry and the pool cannot. Those are states,
+not statements. Read the report to find the files nothing has looked at yet.
 
 `check` compiles `packages/protocol` first. Type-aware linting and the tests
 both resolve that package through its `dist/`, so on a fresh clone every rule

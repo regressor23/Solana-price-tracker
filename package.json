@@ -25,6 +25,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "precheck": "npm run build -w @sol-warzone/protocol",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test",
     "verify:upstream": "vitest run --config vitest.contract.config.ts"
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",
