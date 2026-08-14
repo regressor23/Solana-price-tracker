@@ -23,3 +23,6 @@ coverage/
 
 # agent scratch
 .claude/settings.local.json
+
+# asset candidates, not shipped — see PLAN.md phase 5
+apps/web/public/candidates/
