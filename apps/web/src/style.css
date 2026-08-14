@@ -501,3 +501,160 @@ body.debug .scene {
   height: 100%;
   display: block;
 }
+
+/* ------------------------------------------------------ C4 · liquidity curve */
+
+.curve {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-height: 0;
+  flex: 1;
+}
+
+.curve__svg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: visible;
+}
+
+/* The viewBox is two units wide, so an ordinary stroke would come out two
+   units thick. Every line in here has to opt out of the scaling. */
+.curve__path,
+.curve__mid,
+.curve__wall {
+  vector-effect: non-scaling-stroke;
+  fill: none;
+}
+
+.curve__path {
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.curve__path--bid {
+  stroke: var(--orc-text);
+}
+
+.curve__path--ask {
+  stroke: var(--nexus-text);
+}
+
+.curve__mid {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+/* The ±1% marks: the level the wall totals in C3 are measured at, so the two
+   components are reading the same book at the same depth. */
+.curve__wall {
+  stroke: var(--fill-3);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.curve__axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+/* Something is past the clip and marked at the edge rather than drawn where it
+   claims to be. Stated once on the panel, not per side — which side it was is
+   already visible from where the curve stops. */
+.curve[data-off-scale='true'] .curve__axis::after {
+  content: 'clipped ±2%';
+  color: var(--status-sync);
+}
+
+/* ---------------------------------------------------------- C5 · battle feed */
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-height: 0;
+  flex: 1;
+}
+
+/* Raised, and gone entirely when there is no whale — it must not hold a gap
+   open in the resting state. */
+.feed__whale {
+  padding: var(--sp-8) var(--sp-12);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  box-shadow: var(--tier-whale-edge);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-mono-bold);
+}
+
+.feed__whale[data-side='buy'] {
+  color: var(--nexus-text);
+  border-left: var(--tier-whale-rule) solid var(--nexus);
+}
+
+.feed__whale[data-side='sell'] {
+  color: var(--orc-text);
+  border-left: var(--tier-whale-rule) solid var(--orc);
+}
+
+/* Four tracks over a flat list of spans: §3.11 forbids a wrapper per row, so
+   the grid is what makes the columns. */
+.feed__list {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: baseline;
+  gap: var(--sp-2) var(--sp-8);
+  min-height: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+}
+
+.feed__cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed__cell--time,
+.feed__cell--note {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.feed__cell--tier {
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.feed__cell--what[data-side='buy'] {
+  color: var(--nexus-text);
+}
+
+.feed__cell--what[data-side='sell'] {
+  color: var(--orc-text);
+}
+
+.feed__cell[data-kind='round'] {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+/*
+ * Old rows go quiet instead of leaving, and lose the faction colour with it:
+ * the battle colours belong to the present. --text-dim rather than --muted,
+ * because --muted does not pass AA (§4.5).
+ */
+.feed__cell[data-aged='true'] {
+  color: var(--text-dim);
+}
+
+.feed__empty {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}

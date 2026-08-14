@@ -4,6 +4,7 @@ import type {
   FeedStatus,
   PriceTick,
   Pulse,
+  RoundEnd,
   ServerMessage,
   Trade,
 } from '@sol-warzone/protocol';
@@ -34,6 +35,8 @@ export interface MarketState {
   tradesSeen: number;
   /** Latest authoritative battle state. The server owns this, not us. */
   battle: Pulse | null;
+  /** The most recent round verdict, for the banner and the feed's own row. */
+  round: RoundEnd | null;
   lastMessageAt: number | null;
 }
 
@@ -50,6 +53,7 @@ const emptyState = (): MarketState => ({
   sellUsd: 0,
   tradesSeen: 0,
   battle: null,
+  round: null,
   lastMessageAt: null,
 });
 
@@ -134,7 +138,10 @@ export class MarketStore {
         state.counts.pulse++;
         break;
 
+      // Kept, not counted: the banner shows one verdict and the feed lists it
+      // as a row, so what matters is the latest, not how many there have been.
       case 'round':
+        state.round = message;
         break;
     }
   }

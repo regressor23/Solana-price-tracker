@@ -4,6 +4,8 @@ import { BattleStage } from './battle/stage.js';
 import { Connection, type ConnectionState } from './connection.js';
 import { renderDebug } from './debug.js';
 import { clock, pct, usd } from './format.js';
+import { LiquidityCurve } from './hud/curve.js';
+import { BattleFeed } from './hud/feed.js';
 import { FeedStatusBadge } from './hud/status.js';
 import { WallBar } from './hud/walls.js';
 import { MarketStore } from './store.js';
@@ -65,6 +67,8 @@ if (isDebugRoute) {
 
   const badge = new FeedStatusBadge(el('status'));
   const walls = new WallBar(el('walls'));
+  const curve = new LiquidityCurve(el('curveBody'));
+  const battleFeed = new BattleFeed(el('feedBody'));
 
   const paintBadge = (detail?: string) => badge.update(state, feed, detail);
 
@@ -89,6 +93,12 @@ if (isDebugRoute) {
       case 'snapshot':
         feed = message.status;
         if (message.price) applyTick(message.price.price, message.price.tickChange);
+        if (message.depth) {
+          walls.update(message.depth);
+          curve.update(message.depth);
+        }
+        // Oldest first, so the feed's own ordering does the sorting.
+        for (const past of [...message.recentTrades].reverse()) battleFeed.add(past);
         paintBadge();
         break;
       case 'tick':
@@ -96,6 +106,15 @@ if (isDebugRoute) {
         break;
       case 'depth':
         walls.update(message);
+        curve.update(message);
+        break;
+
+      case 'trade':
+        battleFeed.add(message);
+        break;
+
+      case 'round':
+        battleFeed.round(message);
         break;
       default:
         break;
@@ -127,6 +146,7 @@ if (isDebugRoute) {
   setInterval(() => {
     ui.clock.textContent = `UTC ${clock()}`;
     walls.update(store.state.depth);
+    battleFeed.tick();
   }, 1000);
 
   connection.open();
