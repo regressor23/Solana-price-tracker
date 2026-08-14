@@ -1,15 +1,16 @@
 /*
- * Phase 0 shell, on the design system's tokens.
+ * How the HUD's parts look. Where they sit is layout.css.
  *
  * Every value lives in tokens.css — this file may reference vars but must not
  * define colours or spacing of its own. One palette in two places is how the
  * two quietly drift apart.
  *
  * The font stack still falls through to system-ui: tokens.css names Inter and
- * JetBrains Mono, but the @font-face rules and their woff2 files land with the
- * HUD in phase 6.
+ * JetBrains Mono, but the @font-face rules and their woff2 files are still to
+ * come.
  */
 @import './tokens.css';
+@import './layout.css';
 
 html,
 body {
@@ -22,25 +23,11 @@ body {
   color: var(--text);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
-}
-
-.shell {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  height: 100dvh;
+  /* The scene is fixed and fills the window; nothing here scrolls. */
+  overflow: hidden;
 }
 
 /* ---------------------------------------------------------------- topbar */
-
-.topbar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
 
 .clock {
   font-family: var(--font-mono);
@@ -132,33 +119,42 @@ body {
   color: var(--muted);
 }
 
-/* ----------------------------------------------------------------- stage */
+/* ------------------------------------------------------------ dock panels */
 
-.stage {
-  display: grid;
-  place-items: center;
-  position: relative;
+/*
+ * The only opaque surfaces in the HUD, and §14.2 says why: the curve and the
+ * feed are dense data, and dense data over a moving battlefield is unreadable
+ * whatever the veil. Everything else in the HUD floats on a scrim.
+ *
+ * Because these are opaque, the contrast figures in §4.5 hold here without any
+ * correction for whatever the scene is doing behind them.
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--sp-12);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
   overflow: hidden;
-  background:
-    radial-gradient(120% 80% at 50% 120%, rgba(0, 212, 255, 0.07), transparent 60%),
-    radial-gradient(120% 80% at 50% -20%, rgba(196, 71, 44, 0.07), transparent 60%);
 }
 
-.stage__note {
-  font-size: 0.8rem;
+.panel__title {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
   color: var(--muted);
-  letter-spacing: 0.04em;
 }
 
-/* ------------------------------------------------------------- statusbar */
-
-.statusbar {
-  padding: 0.6rem 1.25rem;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: var(--muted);
+.panel__note {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
 }
 
 /* ----------------------------------------------------------- debug route */
@@ -166,14 +162,8 @@ body {
 /* Instrument panel, not a design. Everything is monospace and tabular so a
    number that changes shape is a number that changed value. */
 
-body.debug .shell {
-  grid-template-rows: 1fr;
-}
-
-body.debug .stage {
-  display: block;
-  place-items: initial;
-  overflow-y: auto;
+/* The scene's element becomes the scroll box; layout.css hides the HUD. */
+body.debug .scene {
   padding: 1rem 1.25rem 3rem;
   font-family: var(--font-mono);
   font-size: 0.78rem;

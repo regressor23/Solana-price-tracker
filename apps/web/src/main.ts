@@ -26,8 +26,9 @@ if (isDebugRoute) {
   document.body.classList.add('debug');
   const root = el('stage');
   root.replaceChildren();
-  el('topbar').remove();
-  el('statusbar').remove();
+  // The HUD is hidden by the `debug` class rather than removed, so the two
+  // routes cannot drift into two different documents.
+  el('hud').remove();
 
   const paint = () => renderDebug(root, store, state);
 
@@ -59,7 +60,6 @@ if (isDebugRoute) {
     tick: el('tick'),
     status: el('status'),
     log: el('log'),
-    stageNote: el('stageNote'),
   };
 
   const paintBadge = (detail?: string) => {
@@ -106,9 +106,8 @@ if (isDebugRoute) {
   };
 
   // Built before the connection so `onMessage` has a stage to report on. The
-  // renderer creates its own canvas — the element type follows from which one
-  // the browser can run — so the placeholder note only has to get out of the way.
-  ui.stageNote.remove();
+  // renderer creates its own canvas inside the scene element — which element
+  // type that is follows from what the browser can run.
   const stage = new BattleStage(el('stage'), store);
   stage.start();
 

@@ -1,0 +1,179 @@
+/*
+ * The HUD's frame: where the scene ends and the interface begins.
+ *
+ * The arrangement is upside down from what phases 0–4 had. The scene was a
+ * grid cell with a header above it and a status line below; §5 asks for the
+ * opposite — the scene fills the window and the HUD lies over it. That is not
+ * decoration. A battle boxed into the middle third reads as a widget on a page;
+ * the same battle running edge to edge with numbers floating over it reads as
+ * the thing the page is for.
+ *
+ * Nothing here defines a colour or a distance. Every value is a token, and the
+ * ones this file needs — --arena-h, --dock-h, --scrim-*, --z-* — were written
+ * in phase 2 and have been waiting since.
+ */
+
+/* -------------------------------------------------------------- the scene */
+
+/*
+ * Fixed rather than absolute: on mobile the address bar collapses on scroll and
+ * takes an absolutely positioned full-height element with it, which would
+ * resize the drawing buffer on every flick.
+ */
+.scene {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-canvas);
+  overflow: hidden;
+  /* Under the canvas, not instead of it: this is what fills the frame before
+     the renderer's first draw, and behind the 2D fallback, which does not
+     paint a sky. */
+  background:
+    radial-gradient(120% 80% at 50% 120%, var(--nexus-fill), transparent 60%),
+    radial-gradient(120% 80% at 50% -20%, var(--orc-fill), transparent 60%);
+}
+
+/* ---------------------------------------------------------------- the HUD */
+
+.hud {
+  position: relative;
+  z-index: var(--z-hud);
+  height: 100dvh;
+  display: grid;
+  /*
+   * Four rows: header, walls, arena, dock.
+   *
+   * The arena's minimum is the whole point. §5 makes the middle 55% of the
+   * window untouchable — that is where the front line runs — so its row carries
+   * its own floor and the dock pays for anything that does not fit. Written the
+   * other way round, a tall dock on a short window would quietly eat the battle.
+   */
+  grid-template-rows: auto auto minmax(var(--arena-h), 1fr) auto;
+  /*
+   * A size container, because --dock-h is in cqh. Percent would resolve against
+   * the dock's own grid area rather than against the window, which is the one
+   * measurement the token is trying to express.
+   */
+  container-type: size;
+  /*
+   * The HUD is a sheet of glass. Everything is see-through to the pointer
+   * unless it says otherwise, so dragging the camera works wherever the scene
+   * is visible — including the empty half of the header.
+   */
+  pointer-events: none;
+}
+
+/*
+ * The veils. Gradients rather than panels: §14.2 keeps solid surfaces for dense
+ * data only, and a bar with a hard edge across a battlefield draws a line the
+ * scene has to fight. These are the darkening that makes small text legible
+ * over whatever the renderer happens to be doing underneath.
+ */
+.hud::before,
+.hud::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--scrim-height);
+  z-index: var(--z-scrim);
+  pointer-events: none;
+}
+
+.hud::before {
+  top: 0;
+  background: var(--scrim-top);
+}
+
+.hud::after {
+  bottom: 0;
+  background: var(--scrim-bottom);
+}
+
+/* Rows sit above their own veil. */
+.hud > * {
+  position: relative;
+  z-index: calc(var(--z-scrim) + 1);
+}
+
+/* --------------------------------------------------------------- the rows */
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  gap: var(--sp-16);
+  min-height: var(--bar-h);
+  padding: var(--sp-12) var(--sp-24);
+}
+
+.walls {
+  padding: 0 var(--sp-24);
+}
+
+/*
+ * Deliberately empty, and deliberately present. It is the reservation itself:
+ * a spacer that keeps the dock from climbing into the battle. The round banner
+ * is the only thing allowed to land here, and it does so absolutely.
+ */
+.arena {
+  position: relative;
+}
+
+.dock {
+  /*
+   * The dock may not exceed a quarter of the window. Its row is `auto`, so its
+   * content sets the height and this puts the ceiling on it — the arena's
+   * minimum is the floor, and between them the layout cannot pin itself.
+   */
+  max-height: var(--dock-h);
+  min-height: 0;
+  display: grid;
+  /* The curve is narrower than the feed: §5. */
+  grid-template-columns: minmax(0, 4fr) minmax(0, 5fr);
+  gap: var(--sp-12);
+  padding: var(--sp-12) var(--sp-24) var(--sp-16);
+  pointer-events: auto;
+}
+
+/*
+ * Ultra-wide: the panels stop growing and the extra width goes to the scene,
+ * which is the only element that gets better with more of it.
+ */
+@media (min-width: 1920px) {
+  .dock {
+    justify-content: center;
+  }
+
+  .dock > * {
+    max-width: var(--col-max);
+    width: 100%;
+  }
+}
+
+/*
+ * Short windows: the dock collapses to a single strip. Below this height the
+ * two columns would each be too short to show anything, and the arena's floor
+ * would start eating into them anyway.
+ */
+@media (max-height: 700px) {
+  .dock {
+    max-height: 120px;
+  }
+}
+
+/* ------------------------------------------------------------ debug route */
+
+/*
+ * The instrument panel is not a skin of this layout — it is a different page
+ * that happens to share an origin. It takes the scene's element as a plain
+ * scrolling box and the HUD does not exist.
+ */
+body.debug .hud {
+  display: none;
+}
+
+body.debug .scene {
+  overflow-y: auto;
+  background: var(--bg);
+}

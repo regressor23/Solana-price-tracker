@@ -15,14 +15,23 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <main class="shell">
+    <!--
+      The scene is the page, and the HUD lies over it. Two siblings rather than
+      a wrapper: the canvas must not be inside anything that scrolls, resizes or
+      paints, because every one of those costs it a resize of the drawing buffer.
+    -->
+    <div class="scene" id="stage"></div>
+
+    <div class="hud" id="hud">
       <header class="topbar" id="topbar">
-        <span class="clock" id="clock">--:--:--</span>
+        <span class="clock num" id="clock">--:--:--</span>
+
         <div class="pair">
           <span class="pair__label" id="pairLabel">SOL/USDC · JUPITER</span>
-          <span class="pair__price" id="price">$—</span>
-          <span class="pair__tick" id="tick">—</span>
+          <span class="pair__price num" id="price" data-skeleton="price"></span>
+          <span class="pair__tick num" id="tick"></span>
         </div>
+
         <div class="feed-state">
           <span class="feed-state__label">FEED</span>
           <span class="feed-state__value" id="status" data-status="offline"
@@ -31,16 +40,21 @@
         </div>
       </header>
 
-      <section class="stage" id="stage">
-        <p class="stage__note" id="stageNote">
-          Phase 0 — transport only. No battle yet.
-        </p>
-      </section>
+      <div class="walls" id="walls"></div>
 
-      <footer class="statusbar" id="statusbar">
-        <span id="log">waiting for collector…</span>
-      </footer>
-    </main>
+      <!-- Untouchable by anything but the round banner. See layout.css. -->
+      <div class="arena" id="arena"></div>
+
+      <section class="dock" id="dock">
+        <section class="panel" id="curvePanel">
+          <h2 class="panel__title">Liquidity curve</h2>
+        </section>
+        <section class="panel" id="feedPanel">
+          <h2 class="panel__title">Battle feed</h2>
+          <p class="panel__note num" id="log">waiting for collector…</p>
+        </section>
+      </section>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
