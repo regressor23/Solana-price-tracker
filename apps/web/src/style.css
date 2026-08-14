@@ -72,13 +72,17 @@ body {
   color: var(--orc-text);
 }
 
+/* --------------------------------------------------------- C2 · feed badge */
+
 .feed-state {
   justify-self: end;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.14em;
+  justify-content: end;
+  gap: var(--sp-4) var(--sp-8);
+  font-size: var(--fs-xs);
+  letter-spacing: var(--ls-caps);
   text-transform: uppercase;
 }
 
@@ -89,34 +93,226 @@ body {
 .feed-state__value {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  font-weight: 600;
+  gap: var(--sp-8);
+  font-weight: var(--fw-semibold);
 }
 
+/*
+ * Shape as well as colour, for two reasons. §9 forbids colour as the only
+ * carrier, and it would not be enough here anyway: `degraded` and `demo` are
+ * both the orc red, so on colour alone two different states look identical.
+ */
 .feed-state__value::before {
   content: '';
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
+  box-sizing: border-box;
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 2px solid currentColor;
   background: currentColor;
 }
 
-.feed-state__value[data-status='live'] {
-  color: #37d67a;
+/* Reserved always, filled only when there is something to say — a slot that
+   appears and vanishes would shove the price sideways on every hiccup. */
+.feed-state__detail {
+  grid-column: 1 / -1;
+  justify-self: end;
+  min-height: 1em;
+  font-size: var(--fs-2xs);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-dim);
 }
 
-.feed-state__value[data-status='sync'],
-.feed-state__value[data-status='connected'] {
-  color: #d6a437;
+.feed-state[data-status='live'] {
+  color: var(--status-live);
 }
 
-.feed-state__value[data-status='degraded'],
-.feed-state__value[data-status='demo'] {
+.feed-state[data-status='live'] .feed-state__value::before {
+  border-radius: 50%; /* ● */
+}
+
+.feed-state[data-status='sync'],
+.feed-state[data-status='connected'] {
+  color: var(--status-sync);
+}
+
+.feed-state[data-status='sync'] .feed-state__value::before,
+.feed-state[data-status='connected'] .feed-state__value::before {
+  border-radius: 50%; /* ○ */
+  background: transparent;
+}
+
+.feed-state[data-status='connecting'] {
+  color: var(--status-connecting);
+}
+
+.feed-state[data-status='connecting'] .feed-state__value::before {
+  border-radius: 50%; /* ◌ */
+  background: transparent;
+  border-style: dashed;
+}
+
+.feed-state[data-status='degraded'] {
+  color: var(--status-degraded);
+}
+
+.feed-state[data-status='degraded'] .feed-state__value::before {
+  transform: rotate(45deg); /* ◆ */
+}
+
+.feed-state[data-status='demo'] {
+  color: var(--status-demo);
+}
+
+.feed-state[data-status='demo'] .feed-state__value::before {
+  border-radius: var(--r-xs); /* ■ */
+}
+
+.feed-state[data-status='offline'] {
+  color: var(--status-offline);
+}
+
+.feed-state[data-status='offline'] .feed-state__value::before {
+  border-radius: var(--r-xs); /* □ */
+  background: transparent;
+}
+
+.feed-state[data-status='fatal'] {
+  color: var(--status-fatal);
+}
+
+.feed-state[data-status='fatal'] .feed-state__value::before {
+  border: 0; /* ▲ */
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+/* ------------------------------------------------------- skeleton plates */
+
+/*
+ * A slot whose value is not known yet, per §C1: a plate of the expected width
+ * and no glyphs. Driven by `:empty`, so it appears and clears itself — and
+ * because it is not text, it is visible during the font's blocking period,
+ * which is exactly when a `$—` placeholder would not be.
+ *
+ * Widths in `em` of the slot's own size, never in `ch`: `ch` depends on the
+ * metrics of the active font, and during the blocking period the active font is
+ * still the fallback, so the plate would jump precisely when it must not.
+ */
+[data-skeleton]:empty::before {
+  content: '';
+  display: inline-block;
+  height: 0.72em;
+  border-radius: var(--r-xs);
+  background: var(--ink-strong);
+}
+
+[data-skeleton='price']:empty::before {
+  width: var(--skel-price);
+}
+
+[data-skeleton='wall']:empty::before {
+  width: var(--skel-wall);
+}
+
+[data-skeleton='sm']:empty::before {
+  width: var(--skel-sm);
+}
+
+/* ---------------------------------------------------------- C3 · wall bar */
+
+/*
+ * Not two numbers in the header's corners. The whole point is the tug of war:
+ * the marker must have somewhere to travel, and its travel mirrors the front
+ * line in the scene because both are computed from the same imbalance.
+ */
+.walls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(30%, 2fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-12);
+}
+
+.walls__side {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-8);
+  min-width: 0;
+  font-size: var(--fs-xs);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+}
+
+.walls__side--nexus {
+  justify-content: flex-end;
+}
+
+.walls__label {
+  color: var(--muted);
+}
+
+.walls__value {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-mono-bold);
+  letter-spacing: normal;
+}
+
+.walls__side--orc .walls__value {
   color: var(--orc-text);
 }
 
-.feed-state__value[data-status='offline'] {
+.walls__side--nexus .walls__value {
+  color: var(--nexus-text);
+}
+
+.walls__track {
+  position: relative;
+  height: var(--sp-8);
+  border-radius: var(--r-pill);
+  /* The two sides meet in the middle; the marker says where the balance is,
+     the ground says whose half it is standing on. */
+  background: linear-gradient(90deg, var(--orc-fill-strong), var(--nexus-fill-strong));
+}
+
+.walls__marker {
+  position: absolute;
+  top: 50%;
+  left: var(--at, 50%);
+  width: var(--sp-4);
+  height: var(--sp-16);
+  transform: translate(-50%, -50%);
+  border-radius: var(--r-xs);
+  background: var(--text);
+  transition: left var(--dur-tween) var(--ease-out);
+}
+
+.walls[data-variant='orc-dominant'] .walls__marker {
+  background: var(--orc-text);
+}
+
+.walls[data-variant='nexus-dominant'] .walls__marker {
+  background: var(--nexus-text);
+}
+
+/* Depth polls once a minute, so age is a normal reading, not an alarm. */
+.walls__age {
+  position: absolute;
+  top: calc(100% + var(--sp-4));
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--fs-2xs);
   color: var(--muted);
+}
+
+.walls[data-state='stale'] .walls__age {
+  color: var(--status-sync);
+}
+
+.walls[data-state='waiting'] .walls__track {
+  background: var(--fill-3);
+}
+
+.walls[data-state='waiting'] .walls__marker {
+  opacity: 0;
 }
 
 /* ------------------------------------------------------------ dock panels */

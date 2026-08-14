@@ -1,9 +1,11 @@
 import type { FeedStatus, ServerMessage } from '@sol-warzone/protocol';
 
 import { BattleStage } from './battle/stage.js';
-import { Connection, badgeFor, type ConnectionState } from './connection.js';
+import { Connection, type ConnectionState } from './connection.js';
 import { renderDebug } from './debug.js';
 import { clock, pct, usd } from './format.js';
+import { FeedStatusBadge } from './hud/status.js';
+import { WallBar } from './hud/walls.js';
 import { MarketStore } from './store.js';
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -58,21 +60,18 @@ if (isDebugRoute) {
     pairLabel: el('pairLabel'),
     price: el('price'),
     tick: el('tick'),
-    status: el('status'),
     log: el('log'),
   };
 
-  const paintBadge = (detail?: string) => {
-    const badge = badgeFor(state, feed);
-    ui.status.textContent = badge.text;
-    ui.status.dataset['status'] = badge.tone;
-    if (detail) ui.log.textContent = detail;
-  };
+  const badge = new FeedStatusBadge(el('status'));
+  const walls = new WallBar(el('walls'));
+
+  const paintBadge = (detail?: string) => badge.update(state, feed, detail);
 
   const applyTick = (price: number, change: number) => {
     ui.price.textContent = usd(price);
     ui.tick.textContent = `${pct(change)} tick`;
-    ui.tick.dataset['dir'] = change >= 0 ? 'up' : 'down';
+    ui.tick.dataset['dir'] = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
   };
 
   const onMessage = (message: ServerMessage): void => {
@@ -81,7 +80,7 @@ if (isDebugRoute) {
       case 'hello':
         feed = message.status;
         ui.pairLabel.textContent = `${message.pair} · JUPITER AGGREGATED`;
-        paintBadge(`connected · protocol v${message.protocol}`);
+        paintBadge(`protocol v${message.protocol}`);
         break;
       case 'status':
         feed = message.status;
@@ -90,10 +89,13 @@ if (isDebugRoute) {
       case 'snapshot':
         feed = message.status;
         if (message.price) applyTick(message.price.price, message.price.tickChange);
-        paintBadge(`snapshot · ${message.candles.length} candles`);
+        paintBadge();
         break;
       case 'tick':
         applyTick(message.price, message.tickChange);
+        break;
+      case 'depth':
+        walls.update(message);
         break;
       default:
         break;
@@ -120,8 +122,11 @@ if (isDebugRoute) {
     },
   });
 
+  // The clock, and the depth snapshot's age with it: depth polls once a minute,
+  // so its age is the number that moves while everything else is still.
   setInterval(() => {
     ui.clock.textContent = `UTC ${clock()}`;
+    walls.update(store.state.depth);
   }, 1000);
 
   connection.open();
