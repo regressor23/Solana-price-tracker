@@ -9,7 +9,7 @@
     "prebuild": "npm run build -w @sol-warzone/protocol && npm run build -w @sol-warzone/web",
     "build": "tsc --build tsconfig.build.json",
     "clean": "tsc --build tsconfig.build.json --clean",
-    "dev": "node --env-file-if-exists=../../.env --watch --experimental-strip-types src/index.ts",
+    "dev": "node dev.mjs",
     "start": "node --env-file-if-exists=../../.env dist/index.js"
   },
   "dependencies": {

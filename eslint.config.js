@@ -41,7 +41,18 @@ export default tseslint.config(
   },
 
   {
-    files: ['*.js', '*.config.ts'],
+    // Plain JavaScript is tooling, not product: config files and the collector's
+    // watch launcher. No tsconfig owns them, so type-aware rules cannot run —
+    // and the glob needs `**/` or it matches only the repository root.
+    files: ['**/*.js', '**/*.mjs', '*.config.ts'],
     ...tseslint.configs.disableTypeChecked,
+  },
+
+  {
+    // Node's globals, spelled out rather than pulled from the `globals` package.
+    // TypeScript files get these from `@types/node`; plain JavaScript has no
+    // such source, and two names are cheaper than a dependency.
+    files: ['**/*.mjs'],
+    languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
   },
 );
